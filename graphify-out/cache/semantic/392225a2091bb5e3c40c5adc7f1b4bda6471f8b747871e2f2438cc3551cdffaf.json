@@ -1,0 +1,1 @@
+{"nodes": [{"id": "chart_templates_serviceaccount_application_service_account", "label": "Application Service Account", "file_type": "document", "source_file": "chart/templates/serviceaccount.yaml", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}
