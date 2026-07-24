@@ -107,7 +107,14 @@ def pick_paper_orientation(
 
 
 class ImageProcessor:
-    def __init__(self):
+    def __init__(self) -> None:
+        self._tool_mask_session = None
+        self._tool_mask_session_initialized = False
+
+    def _get_tool_mask_session(self):
+        if self._tool_mask_session_initialized:
+            return self._tool_mask_session
+
         from app.services.onnx_check import is_onnx_available
 
         if is_onnx_available():
@@ -118,7 +125,8 @@ class ImageProcessor:
             self._tool_mask_session = new_session("u2netp", providers=get_onnx_providers())
         else:
             logger.warning("U2-Net unavailable (no ONNX runtime), paper detection using OpenCV-only")
-            self._tool_mask_session = None
+        self._tool_mask_session_initialized = True
+        return self._tool_mask_session
 
     def _get_tool_mask(self, image_path: str) -> np.ndarray:
         """get a rough tool mask via U2-Net Portable for paper detection."""
@@ -137,7 +145,7 @@ class ImageProcessor:
         if img is None:
             return None
 
-        if self._tool_mask_session is not None:
+        if self._get_tool_mask_session() is not None:
             tool_mask = self._get_tool_mask(image_path)
             img[tool_mask > 0] = [0, 0, 0]
 
