@@ -98,4 +98,6 @@ With partial bins in cut mode, separated islands are exported via `decompose` in
 
 ## 3MF Export
 
-Embossed text labels produce a separate body for multi-colour printing. Both bin body and text body are exported as separate objects in the 3MF. Uses trimesh for export. Only generated when embossed labels exist.
+A 3MF is written for every generated bin. Unlike STL it carries the unit (mm), so CAD tools import it at the right scale.
+
+Embossed text labels produce a separate body for multi-colour printing; bin body and text body are then exported as separate objects in the same 3MF. Without labels the file holds the bin body alone. Uses trimesh for export.
