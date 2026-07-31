@@ -6,12 +6,21 @@ import { OrbitControls, GizmoHelper, GizmoViewport, Bounds, useBounds } from '@r
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { Box, RotateCcw, ArrowUp, ArrowRight, CircleDot, Triangle } from 'lucide-react'
+import { layOutOnBed } from '@/lib/bedLayout'
 
 interface Props {
   stlUrl: string
   splitUrls?: string[]
   insertUrl?: string
+  /** print bed edge length in mm; the floor grid is drawn at this size */
+  bedSize?: number
 }
+
+// mirrors the factory bin default in lib/binDefaults; only used when a caller
+// renders the preview without a configured bed size
+const DEFAULT_BED_SIZE = 256
+// target cell size; the real cell is the bed divided into whole cells
+const GRID_CELL_MM = 10
 
 type CameraView = 'home' | 'top' | 'front' | 'right' | 'fit'
 
@@ -93,7 +102,7 @@ function StlModel({ url, renderMode, color = '#5ab4de', edgeColor = '#1e3d5c' }:
 
 const SPLIT_PIECE_COLORS = ['#4a9eff', '#ff6b4a', '#4aff9e', '#ff4adb']
 
-function SplitModels({ urls, renderMode }: { urls: string[]; renderMode: RenderMode }) {
+function SplitModels({ urls, renderMode, bedSize }: { urls: string[]; renderMode: RenderMode; bedSize: number }) {
   const [pieces, setPieces] = useState<{ geo: THREE.BufferGeometry; edges: THREE.EdgesGeometry; offset: number }[]>([])
 
   useEffect(() => {
@@ -115,16 +124,15 @@ function SplitModels({ urls, renderMode }: { urls: string[]; renderMode: RenderM
 
       const GAP = 10
       const boxes = geos.map(g => { g.computeBoundingBox(); return g.boundingBox! })
-      const totalWidth = boxes.reduce((sum, b) => sum + (b.max.x - b.min.x), 0) + GAP * (geos.length - 1)
-      let xOffset = -totalWidth / 2
+      const sizes = boxes.map(b => ({ w: b.max.x - b.min.x, d: b.max.y - b.min.y }))
+      const offsets = layOutOnBed(sizes, bedSize, GAP)
 
       const result = geos.map((geo, i) => {
         const box = boxes[i]
-        const w = box.max.x - box.min.x
+        const centerX = (box.max.x + box.min.x) / 2
         const centerY = (box.max.y + box.min.y) / 2
         const minZ = box.min.z
-        geo.translate(-((box.max.x + box.min.x) / 2) + xOffset + w / 2, -centerY, -minZ)
-        xOffset += w + GAP
+        geo.translate(-centerX + offsets[i].x, -centerY + offsets[i].y, -minZ)
         const edges = new THREE.EdgesGeometry(geo, 30)
         return { geo, edges, offset: 0 }
       })
@@ -137,7 +145,7 @@ function SplitModels({ urls, renderMode }: { urls: string[]; renderMode: RenderM
       cancelled = true
       loadedPieces.forEach(p => { p.geo.dispose(); p.edges.dispose() })
     }
-  }, [urls])
+  }, [urls, bedSize])
 
   if (pieces.length === 0) return null
 
@@ -219,10 +227,13 @@ function CameraController() {
   return null
 }
 
-function GridFloor() {
+// floor grid drawn at the configured print bed size, so the preview shows
+// whether the bin (or a split part) fits on the bed
+function GridFloor({ bedSize }: { bedSize: number }) {
+  const divisions = Math.max(2, Math.round(bedSize / GRID_CELL_MM))
   return (
     <gridHelper
-      args={[300, 30, '#3f3f46', '#27272a']}
+      args={[bedSize, divisions, '#3f3f46', '#27272a']}
       rotation={[0, 0, 0]}
       position={[0, 0, 0]}
     />
@@ -246,8 +257,9 @@ const viewButtons: { view: CameraView; icon: typeof Box; label: string }[] = [
   { view: 'fit', icon: Box, label: 'Fit' },
 ]
 
-export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
+export function BinPreview3D({ stlUrl, splitUrls, insertUrl, bedSize = DEFAULT_BED_SIZE }: Props) {
   const [renderMode, setRenderMode] = useState<RenderMode>('solid')
+  const bed = bedSize > 0 ? bedSize : DEFAULT_BED_SIZE
   const dispatchView = useCallback((view: CameraView) => {
     window.dispatchEvent(new CustomEvent('bin-preview-view', { detail: view }))
   }, [])
@@ -264,7 +276,7 @@ export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
         <Suspense fallback={<LoadingFallback />}>
           <Bounds clip margin={1.15}>
             {splitUrls && splitUrls.length > 0 ? (
-              <SplitModels urls={splitUrls} renderMode={renderMode} />
+              <SplitModels urls={splitUrls} renderMode={renderMode} bedSize={bed} />
             ) : (
               <StlModel url={stlUrl} renderMode={renderMode} />
             )}
@@ -273,7 +285,7 @@ export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
           </Bounds>
         </Suspense>
 
-        <GridFloor />
+        <GridFloor bedSize={bed} />
         <GizmoHelper alignment="bottom-right" margin={[60, 60]}>
           <GizmoViewport labelColor="white" axisHeadScale={0.8} />
         </GizmoHelper>
@@ -282,7 +294,7 @@ export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
           enableZoom={true}
           enableRotate={true}
           minDistance={50}
-          maxDistance={500}
+          maxDistance={Math.max(500, bed * 3)}
           makeDefault
         />
       </Canvas>

@@ -563,7 +563,7 @@ export default function BinPage() {
                 </div>
               )}
               {stlUrlWithVersion ? (
-                <BinPreview3D stlUrl={stlUrlWithVersion} splitUrls={splitUrlsWithVersion || undefined} insertUrl={insertUrlWithVersion || undefined} />
+                <BinPreview3D stlUrl={stlUrlWithVersion} splitUrls={splitUrlsWithVersion || undefined} insertUrl={insertUrlWithVersion || undefined} bedSize={config.bed_size} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-text-muted text-xs gap-2">
                   {generating ? (
