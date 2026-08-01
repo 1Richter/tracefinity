@@ -63,6 +63,7 @@ By default, Tracefinity uses [IS-Net](https://github.com/xuebinqin/DIS) for loca
 | `TRACERS` | auto-detected | Comma-separated list of available tracers, e.g. `gemini,birefnet-lite,isnet` |
 | `TRACEFINITY_ONNX_PROVIDER` | `auto` | Local ONNX provider: `auto`, `cuda`, or `cpu` |
 | `GEMINI_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Gemini model for mask generation (see below) |
+| `MODEL_IDLE_TIMEOUT_SECONDS` | `300` | Unload local models after this many idle seconds. `0` keeps them resident |
 | `TOOL_LABEL_PROVIDER` | `none` | Optional automatic tool naming. Set to `ollama` for local vision naming |
 | `SHOW_APP_VERSION` | `true` | Show the running version in the settings popover. Set to `false` to hide it |
 
@@ -128,7 +129,7 @@ helm install tracefinity oci://ghcr.io/tracefinity/charts/tracefinity \
   -f values.yaml
 ```
 
-> **Note:** The local tracing models load at startup and require at least 2GB of memory. Set resource limits accordingly — see [Tracing Modes](#tracing-modes) for per-model RAM requirements.
+> **Note:** The local tracing models load on demand and require at least 2GB of memory while loaded. Set resource limits for that peak, not for the idle process — see [Tracing Modes](#tracing-modes) for per-model RAM requirements.
 
 ### From Source
 
@@ -163,7 +164,7 @@ When no API key is configured, Tracefinity runs a local salient object detection
 | [BiRefNet Lite](https://github.com/ZhengPeng7/BiRefNet) | ~3.6s | 8GB | Best | Handles reflections and shiny surfaces well |
 | [InSPyReNet](https://github.com/plemeri/InSPyReNet) | ~2.8s | 6GB | Good | Apple Silicon (MPS) support |
 
-Paper corner detection runs [U2-Net Portable](https://github.com/xuebinqin/U-2-Net) alongside the tracer. RAM figures include both models. All models load at startup. All local models require ONNX Runtime, which needs **AVX** CPU instructions. On non-AVX CPUs (some older VMs, Atoms), U2-Net is skipped (paper detection falls back to OpenCV-only, less accurate) and local tracers are unavailable. Remote tracers (Gemini, Replicate, fal) work regardless.
+Paper corner detection runs [U2-Net Portable](https://github.com/xuebinqin/U-2-Net) alongside the tracer. RAM figures include both models. Models load on first use and are unloaded again after five minutes without a request (`MODEL_IDLE_TIMEOUT_SECONDS`, `0` keeps them loaded). All local models require ONNX Runtime, which needs **AVX** CPU instructions. On non-AVX CPUs (some older VMs, Atoms), U2-Net is skipped (paper detection falls back to OpenCV-only, less accurate) and local tracers are unavailable. Remote tracers (Gemini, Replicate, fal) work regardless.
 
 **Minimum RAM: 2GB** (IS-Net). BiRefNet Lite needs **8GB**. See [Resource Requirements](docs/resource-requirements.md) for full details including Docker memory limits and platform support.
 

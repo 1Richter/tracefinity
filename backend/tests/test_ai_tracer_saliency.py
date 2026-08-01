@@ -14,6 +14,20 @@ def test_no_saliency_tracer_is_gemini_path():
     assert t._saliency_backend is None
 
 
+def test_local_tracer_defers_the_weight_load(monkeypatch):
+    import app.services.onnx_check as onnx_check
+    from app.services.model_slot import ModelSlot
+
+    monkeypatch.setattr(onnx_check, "is_onnx_available", lambda: True)
+
+    t = AITracer(saliency_tracer="isnet")
+    kind, handle = t._saliency_backend
+
+    assert kind == "rembg"
+    assert isinstance(handle, ModelSlot)
+    assert handle.loaded is False
+
+
 def test_remote_tracer_builds_config_and_calls_module(monkeypatch):
     import app.services.remote_saliency as rs
 

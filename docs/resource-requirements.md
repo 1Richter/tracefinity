@@ -2,7 +2,7 @@
 
 ## RAM
 
-Two models run simultaneously: a tracer for tool outlines and U2-Net Portable for paper detection. U2-Net always runs locally regardless of tracing mode, establishing a ~2GB floor.
+Two models are used: a tracer for tool outlines and U2-Net Portable for paper detection. U2-Net always runs locally regardless of tracing mode, establishing a ~2GB floor while both are loaded.
 
 | Mode | Tracer RAM | Total (with U2-Net) |
 |-|-|-|
@@ -12,7 +12,9 @@ Two models run simultaneously: a tracer for tool outlines and U2-Net Portable fo
 | Gemini API | none (remote) | ~2GB |
 | Replicate / fal | none (remote) | ~2GB |
 
-RAM figures are measured in Linux containers with both models loaded. Models load at startup and stay resident.
+RAM figures are measured in Linux containers with both models loaded -- that is the peak, not the resting state.
+
+Models load on first use and are dropped again after 5 minutes without a request (`MODEL_IDLE_TIMEOUT_SECONDS`, `0` disables unloading and keeps them resident). An idle instance falls back to the footprint of the plain Python process, and the next upload or trace pays the load cost again. Set the timeout to `0` on a machine with enough RAM that traces often.
 
 ## CPU
 

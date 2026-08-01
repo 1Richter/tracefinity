@@ -151,8 +151,12 @@ class AITracer:
         return polygons, mask_output_path
 
     def _init_saliency_backend(self):
-        """prepare the saliency backend: load local weights, or build a remote
-        config (no heavy import on the remote path)."""
+        """prepare the saliency backend: a remote config (no heavy import), or
+        a slot that loads the local weights on first use and unloads them
+        again once the tracer has been idle (settings.model_idle_timeout_seconds).
+
+        the second element of the tuple is either a ready handle or a ModelSlot;
+        _saliency_on_image resolves it."""
         if self._saliency_backend is not None:
             return
         name = self.saliency_tracer
@@ -167,28 +171,43 @@ class AITracer:
             )
             self._saliency_backend = (name, cfg)
             return
+
+        from app.config import settings
+        from app.services.model_slot import ModelSlot
+
         label = LOCAL_MODEL_LABELS.get(name, name)
         if name in REMBG_MODELS:
+            # the AVX check is cheap and its failure is a configuration error,
+            # so it stays eager -- only the weights load lazily
             from app.services.onnx_check import is_onnx_available
             if not is_onnx_available():
                 raise RuntimeError(
                     f"local tracer '{name}' requires ONNX runtime but this CPU "
                     "lacks AVX support. Use a remote tracer (gemini/replicate/fal) instead."
                 )
-            from rembg import new_session
 
-            from app.services.ort_runtime import get_onnx_providers
-            providers = get_onnx_providers(require_gpu=name in GPU_REQUIRED_TRACERS)
-            logging.info("loading %s via rembg with providers: %s", label, providers)
-            session = new_session(REMBG_MODELS[name], providers=providers)
-            logging.info("%s actual ONNX providers: %s", label, session.inner_session.get_providers())
-            self._saliency_backend = ("rembg", session)
+            def load_rembg():
+                from rembg import new_session
+
+                from app.services.ort_runtime import get_onnx_providers
+                providers = get_onnx_providers(require_gpu=name in GPU_REQUIRED_TRACERS)
+                logging.info("loading %s via rembg with providers: %s", label, providers)
+                session = new_session(REMBG_MODELS[name], providers=providers)
+                logging.info("%s actual ONNX providers: %s", label, session.inner_session.get_providers())
+                return session
+
+            slot = ModelSlot(load_rembg, label, settings.model_idle_timeout_seconds)
+            self._saliency_backend = ("rembg", slot)
         elif name == "inspyrenet":
-            import torch
-            from transparent_background import Remover
-            device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-            logging.info("loading %s on %s", label, device)
-            self._saliency_backend = ("inspyrenet", Remover(mode="base", device=device))
+            def load_inspyrenet():
+                import torch
+                from transparent_background import Remover
+                device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+                logging.info("loading %s on %s", label, device)
+                return Remover(mode="base", device=device)
+
+            slot = ModelSlot(load_inspyrenet, label, settings.model_idle_timeout_seconds)
+            self._saliency_backend = ("inspyrenet", slot)
         else:
             raise ValueError(f"unsupported saliency model: {name}")
 
@@ -227,9 +246,15 @@ class AITracer:
 
     async def _saliency_on_image(self, pil_img):
         """run the configured saliency backend, return foreground mask (fg=255)."""
+        from app.services.model_slot import ModelSlot
+
         kind, handle = self._saliency_backend
         if kind in REMOTE_TRACERS:
             return await self._saliency_remote(pil_img, handle)
+        # local weights live in a slot; get() loads them if an idle unload
+        # dropped them since the last trace
+        if isinstance(handle, ModelSlot):
+            handle = handle.get()
         if kind == "rembg":
             from rembg import remove
             result = remove(pil_img, session=handle)

@@ -106,19 +106,29 @@ def pick_paper_orientation(
     return (height_mm, width_mm) if top > left else (width_mm, height_mm)
 
 
+def _load_u2netp():
+    from rembg import new_session
+
+    from app.services.ort_runtime import get_onnx_providers
+    return new_session("u2netp", providers=get_onnx_providers())
+
+
 class ImageProcessor:
     def __init__(self):
+        from app.config import settings
+        from app.services.model_slot import ModelSlot
         from app.services.onnx_check import is_onnx_available
 
-        if is_onnx_available():
-            from rembg import new_session
-
-            from app.services.ort_runtime import get_onnx_providers
-            logger.info("loading U2-Net Portable for paper detection")
-            self._tool_mask_session = new_session("u2netp", providers=get_onnx_providers())
-        else:
+        self._onnx_available = is_onnx_available()
+        if not self._onnx_available:
             logger.warning("U2-Net unavailable (no ONNX runtime), paper detection using OpenCV-only")
-            self._tool_mask_session = None
+        # paper detection runs once per upload, so keeping ~200MB of U2-Net
+        # resident between two photos is not worth it
+        self._tool_mask_model = ModelSlot(
+            _load_u2netp,
+            "U2-Net Portable (paper detection)",
+            settings.model_idle_timeout_seconds,
+        )
 
     def _get_tool_mask(self, image_path: str) -> np.ndarray:
         """get a rough tool mask via U2-Net Portable for paper detection."""
@@ -126,7 +136,7 @@ class ImageProcessor:
         from rembg import remove
 
         img = Image.open(image_path).convert("RGB")
-        result = remove(img, session=self._tool_mask_session)
+        result = remove(img, session=self._tool_mask_model.get())
         alpha = np.array(result)[:, :, 3]
         _, mask = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
         return mask
@@ -137,7 +147,7 @@ class ImageProcessor:
         if img is None:
             return None
 
-        if self._tool_mask_session is not None:
+        if self._onnx_available:
             tool_mask = self._get_tool_mask(image_path)
             img[tool_mask > 0] = [0, 0, 0]
 
