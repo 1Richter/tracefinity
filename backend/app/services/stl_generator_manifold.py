@@ -1646,11 +1646,16 @@ class ManifoldSTLGenerator:
         pieces = []
         remainder = part
 
-        for cut in cut_points:
-            top, bottom = remainder.split_by_plane(normal, cut)
-            if not top.is_empty():
-                pieces.append(top)
-            remainder = bottom
+        # cut points run low to high, and split_by_plane returns
+        # (above, below). keep the slab below each cut and carry the part
+        # above it into the next one -- carrying the lower half instead
+        # leaves every later cut outside the remainder, so a bin needing
+        # three or more pieces per axis came out as two.
+        for cut in sorted(cut_points):
+            above, below = remainder.split_by_plane(normal, cut)
+            if not below.is_empty():
+                pieces.append(below)
+            remainder = above
 
         if not remainder.is_empty():
             pieces.append(remainder)

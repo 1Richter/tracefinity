@@ -94,6 +94,8 @@ grid_units = ceil((tool_dimension + 2*wall + 2*clearance + 0.5) / 42)
 
 Large bins are split along grid boundaries using manifold3d `split_by_plane`. Diagonal fit check: `(W + H) / sqrt(2) <= bed_size`. Split parts exported as ZIP.
 
+Each axis is cut into as many slabs as the bed needs (`_compute_split_points`, half-grid granularity), so the result is an N x M field of parts -- a 420mm bin on a 150mm bed becomes 9. `_split_along_axis` walks the cuts low to high and carries the part *above* each cut into the next iteration; carrying the lower half instead puts every later cut outside the remainder and silently caps the result at two pieces per axis.
+
 With partial bins in cut mode, separated islands are exported via `decompose` instead of plane cuts when connect mode is off. With connect mode on, bed splitting measures against the full grid size. See **Partial bins** above.
 
 ## 3MF Export
