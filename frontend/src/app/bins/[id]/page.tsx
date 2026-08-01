@@ -14,7 +14,7 @@ import { Breadcrumb } from '@/components/Breadcrumb'
 import { Alert } from '@/components/Alert'
 import { useDebouncedSave } from '@/hooks/useDebouncedSave'
 import { useProjectSource } from '@/hooks/useProjectSource'
-import { GRID_UNIT } from '@/lib/constants'
+import { clampGridUnits, GRID_MAX_UNITS, GRID_MIN_UNITS, GRID_UNIT } from '@/lib/constants'
 import { useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +49,7 @@ export default function BinPage() {
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
+  const [gridClamped, setGridClamped] = useState(false)
   const generateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastGenerateRef = useRef<string>('')
   const generatingRef = useRef(false)
@@ -203,6 +204,14 @@ export default function BinPage() {
     setPlacedTools(updated)
   }, [])
 
+  // auto-size works from tool bounds alone and can ask for more than the backend
+  // accepts (validate_grid: 1-10u). Clamp, and remember that we did so the UI can
+  // explain why the bin stopped growing instead of failing on save.
+  const clampGrid = useCallback((wantX: number, wantY: number) => {
+    setGridClamped(wantX > GRID_MAX_UNITS || wantY > GRID_MAX_UNITS)
+    return [clampGridUnits(wantX), clampGridUnits(wantY)] as const
+  }, [])
+
   // auto-size: fit grid to bounding box of all placed tools, recentre if grid changes
   useEffect(() => {
     if (!autoSize || isDragging || placedTools.length === 0) return
@@ -220,8 +229,10 @@ export default function BinPage() {
     const toolH = maxY - minY
     const snap = config.half_grid_base ? 0.5 : 1.0;
     const snapUnit = GRID_UNIT * snap;
-    const needX = Math.max(1, Math.ceil((toolW + 2 * halfMargin) / snapUnit) * snap);
-    const needY = Math.max(1, Math.ceil((toolH + 2 * halfMargin) / snapUnit) * snap);
+    const [needX, needY] = clampGrid(
+      Math.max(GRID_MIN_UNITS, Math.ceil((toolW + 2 * halfMargin) / snapUnit) * snap),
+      Math.max(GRID_MIN_UNITS, Math.ceil((toolH + 2 * halfMargin) / snapUnit) * snap),
+    );
 
     const gridChanged = config.grid_x !== needX || config.grid_y !== needY
     if (gridChanged) {
@@ -250,7 +261,7 @@ export default function BinPage() {
         ),
       })))
     }
-  }, [autoSize, isDragging, placedTools, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
+  }, [autoSize, isDragging, placedTools, clampGrid, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
 
   const handleToggleSmoothed = useCallback(async (toolId: string, smoothed: boolean) => {
     try {
@@ -286,8 +297,10 @@ export default function BinPage() {
     const margin = 2 * config.wall_thickness + 2 * config.cutout_clearance + 0.5;
     const snap = config.half_grid_base ? 0.5 : 1.0;
     const snapUnit = GRID_UNIT * snap;
-    const needX = Math.max(config.grid_x, Math.ceil((toolW + margin) / snapUnit) * snap);
-    const needY = Math.max(config.grid_y, Math.ceil((toolH + margin) / snapUnit) * snap);
+    const [needX, needY] = clampGrid(
+      Math.max(config.grid_x, Math.ceil((toolW + margin) / snapUnit) * snap),
+      Math.max(config.grid_y, Math.ceil((toolH + margin) / snapUnit) * snap),
+    );
 
     if (needX !== config.grid_x || needY !== config.grid_y) {
         setConfig((prev) => ({
@@ -315,7 +328,7 @@ export default function BinPage() {
     }
 
     setPlacedTools(prev => [...prev, placed])
-  }, [config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
+  }, [clampGrid, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
 
   function handleDownload() {
     window.open(getBinStlUrl(binId), '_blank')
@@ -431,6 +444,13 @@ export default function BinPage() {
           {error && <Alert variant="error">{error}</Alert>}
           {warning && (
             <InfoBanner>{warning}</InfoBanner>
+          )}
+          {gridClamped && (
+            <InfoBanner>
+              Auto-size stopped at the maximum bin size of {GRID_MAX_UNITS}x{GRID_MAX_UNITS}u
+              ({GRID_MAX_UNITS * GRID_UNIT} x {GRID_MAX_UNITS * GRID_UNIT} mm). Tools that need
+              more room have to go into a second bin.
+            </InfoBanner>
           )}
           {splitCount > 1 && (
             <InfoBanner>Split into {splitCount} pieces</InfoBanner>

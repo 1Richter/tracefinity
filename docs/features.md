@@ -61,7 +61,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Insert mode (contrast insert with configurable height)
 - Bed size for auto-splitting large bins
 - Partial bins (disable individual grid cells to reduce print volume)
-- Auto-size grid to fit placed tools
+- Auto-size grid to fit placed tools (clamped to the 10u / 420mm maximum, with a hint when a tool needs more room)
 - Save/reset default bin configuration (global and per-project)
 
 ## Bin Layout and Placement
