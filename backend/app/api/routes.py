@@ -413,6 +413,22 @@ def _build_bin_from_tools(
     )
 
 
+def _split_field(gen_req: GenerateRequest, stl_urls: list[str]) -> tuple[int, int]:
+    """Columns and rows the parts were cut into, for the 3D preview layout.
+
+    Reported only when the cut plan accounts for every exported part: partial
+    bins export disconnected islands instead of a grid of slabs, and a slab
+    that came out empty leaves a hole in the field. In those cases the preview
+    falls back to a plain row.
+    """
+    if not stl_urls:
+        return (0, 0)
+    cols, rows = stl_generator.split_field(gen_req, gen_req.bed_size)
+    if cols * rows != len(stl_urls):
+        return (0, 0)
+    return (cols, rows)
+
+
 def _run_generate(
     scaled: list[ScaledPolygon],
     gen_req: GenerateRequest,
@@ -426,6 +442,20 @@ def _run_generate(
     # in-flight guard: the request captured its store before any awaits or
     # threadpool hops; refuse to write outputs once the user is deleted
     store.ensure_open()
+
+    # a legal bed and a legal grid can still ask for an unreasonable number of
+    # pieces, each of which costs an STL on disk. Refuse before generating
+    # rather than after writing them all.
+    planned_cols, planned_rows = stl_generator.split_field(gen_req, gen_req.bed_size)
+    if planned_cols * planned_rows > stl_generator.MAX_SPLIT_PARTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"this bin would split into {planned_cols * planned_rows} parts on a "
+                f"{gen_req.bed_size:.0f}mm bed. Use a larger bed size or a smaller bin."
+            ),
+        )
+
     output_path = user_path / "outputs" / f"{entity_id}.stl"
     hash_path = user_path / "outputs" / f"{entity_id}.hash"
     threemf_path = user_path / "outputs" / f"{entity_id}.3mf"
@@ -435,6 +465,7 @@ def _run_generate(
     if output_path.exists() and hash_path.exists() and hash_path.read_text() == input_hash:
         part_paths = sorted(user_path.glob(f"outputs/{entity_id}_part*.stl"))
         stl_urls = [f"/storage/{user_id}/outputs/{p.name}" for p in part_paths]
+        cached_cols, cached_rows = _split_field(gen_req, stl_urls)
         insert_stl_url = (
             f"/storage/{user_id}/outputs/{entity_id}_insert.stl"
             if insert_path.exists() else None
@@ -447,6 +478,8 @@ def _run_generate(
             stl_urls=stl_urls,
             threemf_url=f"/storage/{user_id}/outputs/{entity_id}.3mf" if threemf_path.exists() else None,
             split_count=max(1, len(stl_urls)),
+            split_cols=cached_cols,
+            split_rows=cached_rows,
             zip_url=f"/storage/{user_id}/outputs/{entity_id}_parts.zip" if zip_path.exists() else None,
             insert_stl_url=insert_stl_url,
             warning=cached_warning,
@@ -505,11 +538,15 @@ def _run_generate(
     if threemf_path.exists():
         threemf_url = f"/storage/{user_id}/outputs/{entity_id}.3mf"
 
+    split_cols, split_rows = _split_field(gen_req, stl_urls)
+
     return GenerateResponse(
         stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",
         stl_urls=stl_urls,
         threemf_url=threemf_url,
         split_count=max(1, len(stl_urls)),
+        split_cols=split_cols,
+        split_rows=split_rows,
         zip_url=zip_url,
         insert_stl_url=insert_stl_url,
         warning=warning,

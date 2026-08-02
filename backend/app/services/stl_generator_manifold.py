@@ -1590,12 +1590,39 @@ class ManifoldSTLGenerator:
         for xp in x_pieces:
             pieces.extend(self._split_along_axis(xp, y_cuts, axis='y'))
 
+        return self._export_pieces(pieces, output_dir, session_id)
+
+    # a 6x6 field already means 36 prints of one bin; past that the request is
+    # a mistake rather than a plan, and each part costs an STL on disk
+    MAX_SPLIT_PARTS = 36
+
+    def split_field(self, config: GenerateRequest, bed_size: float) -> tuple[int, int]:
+        """Columns and rows split_bin cuts the bin into, without doing the cut.
+
+        Parts come out column-major -- all rows of the lowest x column first --
+        so a part's index is ``col * rows + row``, both counted from the low end
+        of the axis. The preview uses this to place the pieces the way they are
+        actually cut; the route drops it when the count disagrees, which a
+        partial bin with an empty slab can cause.
+        """
+        if bed_size <= 0:
+            return (0, 0)
+        x_cuts = self._compute_split_points(config.grid_x * GF_GRID, config.grid_x, bed_size)
+        y_cuts = self._compute_split_points(config.grid_y * GF_GRID, config.grid_y, bed_size)
+        if not x_cuts and not y_cuts:
+            return (0, 0)
+        return (len(x_cuts) + 1, len(y_cuts) + 1)
+
+    @staticmethod
+    def _export_pieces(pieces: list, output_dir: str, session_id: str) -> list[str]:
+        """Write one STL per piece. The index is zero-padded so the cached
+        response, which reads the parts back with a sorted glob, keeps the
+        order they were written in once there are ten or more."""
         paths = []
         for i, piece in enumerate(pieces):
-            path = f"{output_dir}/{session_id}_part{i + 1}.stl"
+            path = f"{output_dir}/{session_id}_part{i + 1:02d}.stl"
             _export_stl(piece, path)
             paths.append(path)
-
         return paths
 
     def export_separated_parts(
@@ -1611,12 +1638,7 @@ class ManifoldSTLGenerator:
         if len(pieces) < 2:
             return []
 
-        paths = []
-        for i, piece in enumerate(pieces):
-            path = f"{output_dir}/{session_id}_part{i + 1}.stl"
-            _export_stl(piece, path)
-            paths.append(path)
-        return paths
+        return self._export_pieces(pieces, output_dir, session_id)
 
     def export_split_parts(
         self,

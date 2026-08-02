@@ -192,6 +192,22 @@ class BinParams(BaseModel):
 class BinDefaults(BinParams):
     bed_size: float = 256.0  # mm, 0 = no splitting
 
+    @field_validator("bed_size")
+    @classmethod
+    def validate_bed_size(cls, v: float) -> float:
+        # the split cuts one slab per bed length, so a bed of a millimetre
+        # turns a large grid into hundreds of STLs plus a ZIP in one request.
+        # Wider than the frontend slider (BED_SIZE_MIN_MM / BED_SIZE_MAX_MM in
+        # frontend/src/lib/settings.ts) because the API also serves printers
+        # outside the sizes the slider offers; the part count itself is capped
+        # separately, since a legal bed and a legal grid can still combine into
+        # an unreasonable number of pieces.
+        if v == 0:
+            return v
+        if v < 50 or v > 1000:
+            raise ValueError("bed size must be 0 (no splitting) or between 50 and 1000mm")
+        return v
+
 
 class GenerateRequest(BinDefaults):
     polygons: list[Polygon] | None = None  # optional: use these instead of session polygons
@@ -203,6 +219,12 @@ class GenerateResponse(BaseModel):
     stl_urls: list[str] = []
     threemf_url: str | None = None
     split_count: int = 1
+    # the field the parts were cut into, so the preview can lay them out the
+    # way they will actually be printed. Both 0 when there is no split, or when
+    # the parts do not form a regular field. stl_urls is column-major:
+    # index = col * split_rows + row.
+    split_cols: int = 0
+    split_rows: int = 0
     zip_url: str | None = None
     insert_stl_url: str | None = None
     warning: str | None = None

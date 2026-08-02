@@ -94,7 +94,11 @@ grid_units = ceil((tool_dimension + 2*wall + 2*clearance + 0.5) / 42)
 
 Large bins are split along grid boundaries using manifold3d `split_by_plane`. Diagonal fit check: `(W + H) / sqrt(2) <= bed_size`. Split parts exported as ZIP.
 
-Each axis is cut into as many slabs as the bed needs (`_compute_split_points`, half-grid granularity), so the result is an N x M field of parts -- a 420mm bin on a 150mm bed becomes 9. `_split_along_axis` walks the cuts low to high and carries the part *above* each cut into the next iteration; carrying the lower half instead puts every later cut outside the remainder and silently caps the result at two pieces per axis.
+Each axis is cut into as many slabs as the bed needs (`_compute_split_points`, half-grid granularity), so the result is an N x M field of parts -- a 420mm bin on a 150mm bed becomes 9. `_split_along_axis` walks the cuts low to high and keeps the slab below each one, carrying the part above it into the next iteration.
+
+Parts are written column-major: all rows of the lowest x column first, each axis counted from its low end, so a part's index is `col * rows + row`. `split_field` reports that shape without doing the cut, and `GenerateResponse.split_cols` / `split_rows` pass it to the 3D preview so the pieces are laid out the way they are actually cut. Both are `0` when there is no split, or when the parts do not form a regular field -- separated partial-bin islands, or a slab that came out empty.
+
+`bed_size` is validated to 0 (no splitting) or 50-1000mm, and the part count is capped at `MAX_SPLIT_PARTS` (36). Individually legal values can still combine into hundreds of pieces, and each one costs an STL on disk, so the route refuses before generating rather than after writing them all.
 
 With partial bins in cut mode, separated islands are exported via `decompose` instead of plane cuts when connect mode is off. With connect mode on, bed splitting measures against the full grid size. See **Partial bins** above.
 
