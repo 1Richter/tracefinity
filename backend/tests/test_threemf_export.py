@@ -57,6 +57,37 @@ def test_bin_without_labels_is_a_single_body(tmp_path: Path):
     assert objects[0].find(f"{MODEL_NS}mesh") is not None
 
 
+def test_a_missing_3mf_is_reported_on_the_cached_path_too(tmp_path: Path, monkeypatch):
+    """The hash is written even when the export failed, so the second request
+    for the same config hits the cache. It has to explain the missing download
+    the same way the first one did."""
+    from app.api import routes
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    (outputs / "bin.stl").write_bytes(b"solid\nendsolid\n")
+    (outputs / "bin.hash").write_text("same-hash")
+    # no bin.3mf: this is what a failed export leaves behind
+
+    response = routes._run_generate(
+        [],
+        GenerateRequest(grid_x=2, grid_y=2),
+        "bin",
+        tmp_path,
+        "same-hash",
+        "user",
+        _OpenStore(),
+    )
+
+    assert response.threemf_url is None
+    assert response.warning == routes.THREEMF_FAILED_WARNING
+
+
+class _OpenStore:
+    def ensure_open(self) -> None:
+        pass
+
+
 def test_embossed_labels_stay_a_separate_body(tmp_path: Path):
     root = _model_root(
         _generate(

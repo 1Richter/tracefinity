@@ -189,6 +189,20 @@ def _get_tracer(tracer_id: str | None = None) -> AITracer:
 polygon_scaler = PolygonScaler()
 stl_generator = ManifoldSTLGenerator()
 
+# reported through GenerateResponse.warning from both the fresh and the cached
+# path, so the user learns why a download is missing rather than just not
+# seeing the button
+INSERT_FAILED_WARNING = (
+    "Insert generation failed. Try re-tracing the tools or adjusting their placement."
+)
+THREEMF_FAILED_WARNING = "3MF export failed, so only the STL is available. Check the server log."
+
+
+def _add_warning(existing: str | None, message: str) -> str:
+    """GenerateResponse carries one warning string, so a second cause joins the
+    first rather than replacing it or going unreported."""
+    return message if existing is None else f"{existing} {message}"
+
 
 def _rel(abs_path: str | Path, user_path: Path) -> str:
     """store path relative to storage root (includes user_id prefix)"""
@@ -441,7 +455,12 @@ def _run_generate(
         )
         cached_warning = None
         if getattr(gen_req, 'insert_enabled', False) and not insert_path.exists():
-            cached_warning = "Insert generation failed. Try re-tracing the tools or adjusting their placement."
+            cached_warning = _add_warning(cached_warning, INSERT_FAILED_WARNING)
+        if not threemf_path.exists():
+            # the hash is written even when the 3MF export failed, so without
+            # this the second request for the same config -- the one a user is
+            # most likely to make -- drops the download again in silence
+            cached_warning = _add_warning(cached_warning, THREEMF_FAILED_WARNING)
         return GenerateResponse(
             stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",
             stl_urls=stl_urls,
@@ -497,17 +516,17 @@ def _run_generate(
                     zf.write(str(insert_path), f"{entity_id}_insert.stl")
                 zip_url = f"/storage/{user_id}/outputs/{entity_id}_parts.zip"
         else:
-            warning = "Insert generation failed. Try re-tracing the tools or adjusting their placement."
+            warning = INSERT_FAILED_WARNING
 
     hash_path.write_text(input_hash)
 
     threemf_url = None
     if threemf_path.exists():
         threemf_url = f"/storage/{user_id}/outputs/{entity_id}.3mf"
-    elif warning is None:
+    else:
         # the 3MF is written for every bin, so a missing one means the export
         # failed. Say so instead of just dropping the button from the menu.
-        warning = "3MF export failed, so only the STL is available. Check the server log."
+        warning = _add_warning(warning, THREEMF_FAILED_WARNING)
 
     return GenerateResponse(
         stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",
