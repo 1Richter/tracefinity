@@ -16,7 +16,7 @@ const KEY = 'tracefinity-settings'
 export function getSettings(): UserSettings {
   if (typeof window === 'undefined') return DEFAULTS
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = window.localStorage.getItem(KEY)
     if (!raw) return DEFAULTS
     return { ...DEFAULTS, ...JSON.parse(raw) }
   } catch {
@@ -35,10 +35,13 @@ export function saveLastTracer(tracerId: string): void {
   saveSettings({ lastTracer: tracerId })
 }
 
-/** Pick the tracer to preselect: the stored one if still offered, else the first. */
+/**
+ * Pick the tracer to preselect: the stored one if still offered, else the first.
+ * Takes the stored id rather than reading it, so it stays a pure function.
+ */
 export function resolvePreferredTracer(
   tracers: { id: string }[],
-  stored: string | null = getLastTracer(),
+  stored: string | null,
 ): string | null {
   if (!tracers.length) return null
   if (stored && tracers.some(t => t.id === stored)) return stored

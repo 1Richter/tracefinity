@@ -9,7 +9,7 @@ import { PolygonEditor } from '@/components/PolygonEditor'
 import { SessionInfo } from '@/components/SessionInfo'
 import { Alert } from '@/components/Alert'
 import { getSession, setCorners, traceTools, updatePolygons, updateSession, getImageUrl, getAvailableKeys, traceFromMask, saveToolsFromSession } from '@/lib/api'
-import { resolvePreferredTracer, saveLastTracer } from '@/lib/settings'
+import { getLastTracer, resolvePreferredTracer, saveLastTracer } from '@/lib/settings'
 import { CornersHint, TraceHint, EditHint } from '@/components/OnboardingIllustrations'
 import { PhotoWarningsBanner } from '@/components/PhotoWarningsBanner'
 import { StepBar } from '@/components/StepBar'
@@ -112,7 +112,9 @@ export default function TracePage() {
         setProviderLabel(keys.provider_label)
         setProviderType(keys.provider)
         setTracers(keys.tracers || [])
-        if (keys.tracers?.length) setSelectedTracer(resolvePreferredTracer(keys.tracers))
+        if (keys.tracers?.length) {
+          setSelectedTracer(resolvePreferredTracer(keys.tracers, getLastTracer()))
+        }
 
         if (!keys.google) {
           setProvider('manual')

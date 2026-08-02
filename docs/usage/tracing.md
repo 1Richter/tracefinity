@@ -10,7 +10,7 @@ Paper detection uses a separate U2-Net Portable model that is always loaded alon
 
 ## Tracer backends
 
-The tracer model is configurable via the `TRACERS` environment variable. Multiple can be specified (comma-separated); the first is used by default.
+The tracer model is configurable via the `TRACERS` environment variable. Multiple can be specified (comma-separated); the first is used by default. Once you pick a tracer in the dropdown, that choice is remembered in your browser and preselected on the next visit -- until it stops being offered, at which point the first entry is used again.
 
 | Backend | Env value | Speed | RAM (min) | Notes |
 |-|-|-|-|-|

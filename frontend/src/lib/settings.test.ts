@@ -43,25 +43,42 @@ describe('tracer persistence', () => {
   it('preselects the stored tracer when it is still available', () => {
     saveLastTracer('birefnet-lite')
 
-    expect(resolvePreferredTracer(TRACERS)).toBe('birefnet-lite')
+    expect(resolvePreferredTracer(TRACERS, getLastTracer())).toBe('birefnet-lite')
   })
 
   it('falls back to the first tracer when the stored one is gone', () => {
     saveLastTracer('replicate')
 
-    expect(resolvePreferredTracer(TRACERS)).toBe('isnet')
+    expect(resolvePreferredTracer(TRACERS, getLastTracer())).toBe('isnet')
   })
 
   it('falls back to the first tracer when nothing is stored', () => {
-    expect(resolvePreferredTracer(TRACERS)).toBe('isnet')
+    expect(resolvePreferredTracer(TRACERS, null)).toBe('isnet')
   })
 
   it('returns null when no tracers are offered', () => {
-    expect(resolvePreferredTracer([])).toBeNull()
+    expect(resolvePreferredTracer([], 'isnet')).toBeNull()
   })
 
-  it('ignores an empty stored value', () => {
+  it('keeps the previous tracer when an empty id is saved', () => {
+    saveLastTracer('isnet')
     saveLastTracer('')
+
+    expect(getLastTracer()).toBe('isnet')
+  })
+
+  it('survives a storage backend that refuses to write', () => {
+    const storage = installLocalStorage()
+    vi.spyOn(storage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+
+    expect(() => saveLastTracer('gemini')).not.toThrow()
+    expect(getLastTracer()).toBeNull()
+  })
+
+  it('ignores a stored value of the wrong type', () => {
+    installLocalStorage().setItem('tracefinity-settings', JSON.stringify({ lastTracer: 42 }))
 
     expect(getLastTracer()).toBeNull()
   })
