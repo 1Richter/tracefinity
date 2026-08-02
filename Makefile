@@ -9,7 +9,7 @@ dev:
 test: test-backend test-frontend
 
 test-backend:
-	cd backend && python -m pytest
+	cd backend && . venv/bin/activate && python -m pytest
 
 test-frontend:
 	cd frontend && pnpm run test

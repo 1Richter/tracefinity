@@ -47,10 +47,11 @@ Backend: ruff, configured in `pyproject.toml` (rules E/F/W/I, ignores E402/E501)
 make test           # backend pytest + frontend vitest
 make test-backend   # pytest only
 make test-frontend  # vitest only
-make test-e2e       # playwright (needs a running app)
 ```
 
 CI runs both unit suites on PRs and pushes to main (`.github/workflows/tests.yml`).
+
+`make test-e2e` runs the playwright suite. It needs a running app, is not part of `make test`, and does not run in CI.
 
 ## Principles
 
