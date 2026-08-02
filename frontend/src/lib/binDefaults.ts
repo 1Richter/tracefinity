@@ -1,4 +1,5 @@
 import type { BinConfig, BinDefaults } from '@/types'
+import { DEFAULT_BED_SIZE_MM } from './constants'
 import { getSettings, saveSettings } from './settings'
 
 export function createPartialBinsValues(gridX: number, gridY: number): boolean[] {
@@ -27,7 +28,7 @@ export const FACTORY_BIN_CONFIG: BinConfig = {
   partial_bins_values: createPartialBinsValues(2, 2),
   partial_bins_connect: false,
   partial_bins_retain_wall: false,
-  bed_size: 256,
+  bed_size: DEFAULT_BED_SIZE_MM,
   text_labels: [],
 }
 

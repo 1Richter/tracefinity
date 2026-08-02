@@ -5,11 +5,17 @@ const GAP = 10
 
 /**
  * What split_bin actually produces, not synthetic sizes: it makes each slab as
- * large as the bed allows, so a 420mm bin becomes 2x2 of ~210mm on a 256mm bed
- * and 3x3 of ~140mm on a 150mm bed. Sizes measured from the generated STLs.
+ * large as the bed allows, so no two parts ever fit side by side on the bed.
+ *
+ * _compute_split_points works in 21mm half-units, so the trailing slab is
+ * whatever is left over: a 419.5mm bin on a 150mm bed takes 7 half-units per
+ * slab (147mm) and the last one gets 6 (126mm), not an even third.
  */
 const SPLIT_2X2 = Array.from({ length: 4 }, () => ({ w: 209.8, d: 209.8 }))
-const SPLIT_3X3 = Array.from({ length: 9 }, () => ({ w: 147, d: 147 }))
+const SPLIT_3X3_SPANS = [147, 147, 125.5]
+const SPLIT_3X3 = SPLIT_3X3_SPANS.flatMap(w =>
+  SPLIT_3X3_SPANS.map(d => ({ w, d })),
+)
 
 describe('layOutCutField', () => {
   it('places a 2x2 split in two columns and two rows', () => {
@@ -34,8 +40,17 @@ describe('layOutCutField', () => {
   it('centres the field on the origin', () => {
     const offsets = layOutCutField(SPLIT_3X3, 3, 3, GAP)
 
-    expect(offsets.reduce((sum, o) => sum + o.x, 0)).toBeCloseTo(0)
-    expect(offsets.reduce((sum, o) => sum + o.y, 0)).toBeCloseTo(0)
+    // the field's extent is symmetric about the origin. Summing the part
+    // centres is not the same thing once the trailing slab is narrower, which
+    // every fractional-remainder split produces.
+    const edges = offsets.map((o, i) => ({
+      loX: o.x - SPLIT_3X3[i].w / 2,
+      hiX: o.x + SPLIT_3X3[i].w / 2,
+      loY: o.y - SPLIT_3X3[i].d / 2,
+      hiY: o.y + SPLIT_3X3[i].d / 2,
+    }))
+    expect(Math.min(...edges.map(e => e.loX))).toBeCloseTo(-Math.max(...edges.map(e => e.hiX)))
+    expect(Math.min(...edges.map(e => e.loY))).toBeCloseTo(-Math.max(...edges.map(e => e.hiY)))
   })
 
   it('counts rows from the low end of the axis, as the backend cuts them', () => {

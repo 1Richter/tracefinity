@@ -7,7 +7,7 @@ import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { Box, RotateCcw, ArrowUp, ArrowRight, CircleDot, Triangle } from 'lucide-react'
 import { layOutCutField, type PartSize } from '@/lib/bedLayout'
-import { FACTORY_BIN_CONFIG } from '@/lib/binDefaults'
+import { DEFAULT_BED_SIZE_MM } from '@/lib/constants'
 
 interface Props {
   stlUrl: string
@@ -20,8 +20,6 @@ interface Props {
   splitRows?: number
 }
 
-// only used when a caller renders the preview without a configured bed size
-const DEFAULT_BED_SIZE = FACTORY_BIN_CONFIG.bed_size
 // target cell size; the real cell is the bed divided into whole cells. Not the
 // 42mm gridfinity unit -- this grid measures the print bed, not the bin.
 const GRID_CELL_MM = 10
@@ -170,16 +168,19 @@ function SplitModels(
     [pieces, cols, rows],
   )
 
-  // the camera fits once on load, but the field can be several times the size
-  // of a single bin and changes shape with the bed size, so ask for a refit
+  // the camera fits once on load, but a field is several times the size of one
+  // bin and changes shape with the bed size, so refit when that shape changes.
+  // Only then: every edit regenerates and reloads the pieces, and refitting on
+  // each of those would throw away whatever the user had orbited to.
+  const bounds = useBounds()
+  const fieldShape = `${pieces.length}:${cols}x${rows}`
+  const fittedShape = useRef<string | null>(null)
   useEffect(() => {
-    if (pieces.length === 0) return
-    const t = setTimeout(
-      () => window.dispatchEvent(new CustomEvent('bin-preview-view', { detail: 'fit' })),
-      50,
-    )
+    if (pieces.length === 0 || fittedShape.current === fieldShape) return
+    fittedShape.current = fieldShape
+    const t = setTimeout(() => bounds.refresh().fit(), 50)
     return () => clearTimeout(t)
-  }, [pieces, offsets])
+  }, [bounds, fieldShape, pieces.length])
 
   if (pieces.length === 0) return null
 
@@ -295,12 +296,14 @@ export function BinPreview3D({
   stlUrl,
   splitUrls,
   insertUrl,
-  bedSize = DEFAULT_BED_SIZE,
+  bedSize = DEFAULT_BED_SIZE_MM,
   splitCols = 0,
   splitRows = 0,
 }: Props) {
   const [renderMode, setRenderMode] = useState<RenderMode>('solid')
-  const bed = bedSize > 0 ? bedSize : DEFAULT_BED_SIZE
+  // bed_size 0 means the user turned splitting off; the floor grid still
+  // needs a size, so fall back to the default rather than drawing nothing
+  const bed = bedSize > 0 ? bedSize : DEFAULT_BED_SIZE_MM
   const dispatchView = useCallback((view: CameraView) => {
     window.dispatchEvent(new CustomEvent('bin-preview-view', { detail: view }))
   }, [])
