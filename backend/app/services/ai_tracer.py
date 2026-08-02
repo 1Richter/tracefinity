@@ -207,11 +207,14 @@ class AITracer:
                 return Remover(mode="base", device=device)
 
             def release_torch_cache():
-                # torch returns freed CUDA blocks to its own caching allocator,
-                # not to the driver, so dropping the model alone frees no VRAM
+                # torch returns freed device blocks to its own caching
+                # allocator, not to the driver, so dropping the model alone
+                # frees no VRAM
                 import torch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                elif torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
 
             slot = ModelSlot(
                 load_inspyrenet,
@@ -269,14 +272,14 @@ class AITracer:
 
     def _saliency_local(self, pil_img, kind, slot):
         """blocking half of _saliency_on_image, run in a worker thread."""
-        model = slot.get()
-        if kind == "rembg":
-            from rembg import remove
-            result = remove(pil_img, session=model)
-            alpha = np.array(result)[:, :, 3]
-            _, binary = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
-            return binary
-        result = model.process(pil_img, type="map")
+        with slot.use() as model:
+            if kind == "rembg":
+                from rembg import remove
+                result = remove(pil_img, session=model)
+                alpha = np.array(result)[:, :, 3]
+                _, binary = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
+                return binary
+            result = model.process(pil_img, type="map")
         mask_np = np.array(result.convert("L"))
         _, binary = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)
         return binary

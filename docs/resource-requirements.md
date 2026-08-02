@@ -12,13 +12,13 @@ Two models are used: a tracer for tool outlines and U2-Net Portable for paper de
 | Gemini API | none (remote) | ~2GB |
 | Replicate / fal | none (remote) | ~2GB |
 
-RAM figures are measured in Linux containers with both models loaded -- that is the peak, not the resting state. Size `--memory` for the peak.
+RAM figures are measured in Linux containers with both models loaded -- that is the peak, not the resting state. Size `--memory` for the peak. Each model serves one call at a time, so concurrent uploads or traces queue rather than multiplying the figure.
 
-Models load on first use and are dropped again after 5 minutes without a request (`MODEL_IDLE_TIMEOUT_SECONDS`, `0` disables unloading and keeps them resident). Unloading releases the weights and the allocator arena behind them, which is the part that scales with the tracer: U2-Net Portable is around 200MB of the ~2GB floor. The rest of the floor is the interpreter with ONNX Runtime, torch, OpenCV and numpy imported, and none of that goes away -- an idle instance does **not** drop to the footprint of a bare Python process. Expect the idle saving to be roughly the tracer column above, not the total.
+Models load on first use and are dropped again after 5 minutes without a request (`MODEL_IDLE_TIMEOUT_SECONDS`, `0` disables unloading and keeps them resident). Unloading releases the weights and the allocator arena behind them, which is the part that scales with the tracer: U2-Net Portable is roughly 200MB of the ~2GB floor. The rest of the floor is the interpreter with ONNX Runtime, torch, OpenCV and numpy imported, and none of that goes away -- an idle instance does **not** drop to the footprint of a bare Python process. Expect the idle saving to be roughly the tracer column above, not the total. (The tracer figures are container measurements; the 200MB split between weights and imports is an estimate.)
 
-The next upload or trace pays the load cost again, on a worker thread so it never blocks other requests. Set the timeout to `0` on a machine that has the RAM and traces often.
+The next upload or trace pays the load cost again. Loading and inference both run on a worker thread, so a cold load no longer blocks the event loop for its full duration -- though some per-request image work still runs there, so a request is not completely free of the others. Set the timeout to `0` on a machine that has the RAM and traces often.
 
-On GPU (`TRACEFINITY_ONNX_PROVIDER=cuda` or InSPyReNet on CUDA), unloading also empties torch's caching allocator, since freed CUDA blocks otherwise stay reserved by the process rather than returning to the driver.
+On GPU, InSPyReNet's unload also empties torch's caching allocator, since freed device blocks otherwise stay reserved by the process rather than returning to the driver. The ONNX tracers need no equivalent: the CUDA execution provider owns its allocator and frees it with the session.
 
 ## CPU
 

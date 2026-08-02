@@ -135,11 +135,14 @@ class ImageProcessor:
         from PIL import Image
         from rembg import remove
 
+        # detect_paper_corners already gates on this; the guard is here so a
+        # future caller gets the reason rather than an ImportError from rembg
         if not self._onnx_available:
             raise RuntimeError("U2-Net needs ONNX Runtime, which is unavailable on this CPU")
 
         img = Image.open(image_path).convert("RGB")
-        result = remove(img, session=self._tool_mask_model.get())
+        with self._tool_mask_model.use() as session:
+            result = remove(img, session=session)
         alpha = np.array(result)[:, :, 3]
         _, mask = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
         return mask
