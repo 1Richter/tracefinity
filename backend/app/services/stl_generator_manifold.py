@@ -1462,7 +1462,11 @@ class ManifoldSTLGenerator:
             try:
                 _export_3mf(bin_body, text_body, threemf_path)
             except Exception:
-                logger.warning("3MF export failed, skipping", exc_info=True)
+                # every bin takes this path now, so a broken trimesh soft
+                # dependency costs the 3MF everywhere rather than only on
+                # labelled bins. The route turns the missing file into a
+                # warning the user can see.
+                logger.error("3MF export failed, skipping", exc_info=True)
 
         return bin_body, text_body
 

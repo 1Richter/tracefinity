@@ -504,6 +504,10 @@ def _run_generate(
     threemf_url = None
     if threemf_path.exists():
         threemf_url = f"/storage/{user_id}/outputs/{entity_id}.3mf"
+    elif warning is None:
+        # the 3MF is written for every bin, so a missing one means the export
+        # failed. Say so instead of just dropping the button from the menu.
+        warning = "3MF export failed, so only the STL is available. Check the server log."
 
     return GenerateResponse(
         stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",

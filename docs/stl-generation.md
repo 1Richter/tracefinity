@@ -98,6 +98,8 @@ With partial bins in cut mode, separated islands are exported via `decompose` in
 
 ## 3MF Export
 
-A 3MF is written for every generated bin. Unlike STL it carries the unit (mm), so CAD tools import it at the right scale.
+A 3MF is written for every generated bin. Unlike STL it carries the unit (mm), so CAD tools import it at the right scale. It always holds the whole bin: bed-split parts and separated partial-bin islands are exported as STL only, so a bin that does not fit the bed has no 3MF of the pieces you actually print.
+
+When the export fails (usually a missing trimesh dependency -- see `networkx` in `backend/requirements.txt`), the file is absent and the generate route returns a warning rather than silently hiding the download.
 
 Embossed text labels produce a separate body for multi-colour printing; bin body and text body are then exported as separate objects in the same 3MF. Without labels the file holds the bin body alone. Uses trimesh for export.
