@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getProjectCollections, getUniqueBinTools } from './projectSelectors'
+import { binProjectLabel, getProjectCollections, getUniqueBinTools, isProjectOwnedBin } from './projectSelectors'
 import type { BinProject, BinSummary, ToolSummary } from '@/types'
 
 const tool = (id: string): ToolSummary => ({
@@ -71,5 +71,31 @@ describe('project selectors', () => {
     })
 
     expect(collections.toolBins.get(toolOne.id)?.map(item => item.id)).toEqual(['bin-1'])
+  })
+})
+
+describe('dashboard bin ownership', () => {
+  const names = new Map([['project-1', 'Workbench']])
+
+  it('treats a bin with a project id as owned', () => {
+    expect(isProjectOwnedBin(bin([]))).toBe(true)
+    expect(isProjectOwnedBin({ ...bin([]), project_id: null })).toBe(false)
+  })
+
+  it('labels an owned bin with its project name', () => {
+    expect(binProjectLabel(bin([]), names)).toBe('Workbench')
+  })
+
+  it('never hides a bin without a badge to explain it', () => {
+    // a bin whose project is missing from the dashboard list is still hidden,
+    // so it has to carry a fallback label once the user reveals it
+    const orphan = { ...bin([]), project_id: 'project-gone' }
+
+    expect(isProjectOwnedBin(orphan)).toBe(true)
+    expect(binProjectLabel(orphan, names)).toBe('Project')
+  })
+
+  it('gives an unowned bin no label', () => {
+    expect(binProjectLabel({ ...bin([]), project_id: null }, names)).toBeNull()
   })
 })

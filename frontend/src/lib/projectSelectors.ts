@@ -32,6 +32,29 @@ export function projectNameMap(projects: BinProjectSummary[]) {
   return new Map(projects.map(project => [project.id, project.name]))
 }
 
+/**
+ * Whether the dashboard treats a bin as owned by a project.
+ *
+ * Only `bin.project_id` is available here: the dashboard lists projects as
+ * summaries, which carry no `bin_ids`, so the reverse link that
+ * getProjectCollections also honours cannot be checked. A bin linked only from
+ * the project side counts as unowned and stays visible, which is the safe
+ * direction -- the project health check reports it as `bin_missing_project_id`
+ * and the repair action writes the missing `project_id` back.
+ */
+export function isProjectOwnedBin(bin: BinSummary) {
+  return Boolean(bin.project_id)
+}
+
+/**
+ * Label for the project badge on a bin card. Never null for a bin that
+ * isProjectOwnedBin hides, so a hidden bin always explains itself once shown.
+ */
+export function binProjectLabel(bin: BinSummary, projectNameById: Map<string, string>) {
+  if (!bin.project_id) return null
+  return projectNameById.get(bin.project_id) || 'Project'
+}
+
 export type ProjectToolFilter = 'all' | 'unplaced' | 'placed'
 
 export function getUniqueBinTools(
