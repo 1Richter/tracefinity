@@ -112,7 +112,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 
 - Interactive real-time 3D viewer (react-three-fiber)
 - Floor grid drawn at the configured print bed size (cells of roughly 10mm)
-- Split visualisation for multi-part bins, laid out in rows that fit the bed
+- Split visualisation for multi-part bins, laid out in the field the backend actually cut (a 3x3 split shows as 3x3), with the bed grid underneath for scale
 - Insert display when enabled
 - Pan/zoom/rotate
 

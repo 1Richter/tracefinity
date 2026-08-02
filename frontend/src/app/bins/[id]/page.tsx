@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { BinEditor } from '@/components/BinEditor'
 import { BinConfigurator, calcMaxCutoutDepth } from '@/components/BinConfigurator'
@@ -44,6 +44,7 @@ export default function BinPage() {
   const [zipUrl, setZipUrl] = useState<string | null>(null)
   const [insertStlUrl, setInsertStlUrl] = useState<string | null>(null)
   const [splitCount, setSplitCount] = useState(1)
+  const [splitField, setSplitField] = useState({ cols: 0, rows: 0 })
   const [stlVersion, setStlVersion] = useState(0)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -148,6 +149,7 @@ export default function BinPage() {
       setZipUrl(result.zip_url ? getImageUrl(result.zip_url) : null)
       setInsertStlUrl(result.insert_stl_url ? getImageUrl(result.insert_stl_url) : null)
       setSplitCount(result.split_count || 1)
+      setSplitField({ cols: result.split_cols || 0, rows: result.split_rows || 0 })
       setStlVersion(v => v + 1)
       setWarning(result.warning || null)
     } catch (err) {
@@ -342,6 +344,13 @@ export default function BinPage() {
     }, 2500)
   }
 
+  // stable identity: the preview reloads every part when this array changes,
+  // and rebuilding it each render made that happen on any re-render at all
+  const splitUrlsWithVersion = useMemo(
+    () => (stlUrls.length > 0 ? stlUrls.map(u => `${u}?v=${stlVersion}`) : null),
+    [stlUrls, stlVersion],
+  )
+
   function handleSaveDefaults() {
     saveDefaultBinConfig(config)
     showDefaultsStatus('Defaults saved')
@@ -370,7 +379,6 @@ export default function BinPage() {
   }
 
   const stlUrlWithVersion = stlUrl ? `${stlUrl}?v=${stlVersion}` : null
-  const splitUrlsWithVersion = stlUrls.length > 0 ? stlUrls.map(u => `${u}?v=${stlVersion}`) : null
   const insertUrlWithVersion = insertStlUrl ? `${insertStlUrl}?v=${stlVersion}` : null
   const binW = config.grid_x * GRID_UNIT
   const binH = config.grid_y * GRID_UNIT
@@ -563,7 +571,14 @@ export default function BinPage() {
                 </div>
               )}
               {stlUrlWithVersion ? (
-                <BinPreview3D stlUrl={stlUrlWithVersion} splitUrls={splitUrlsWithVersion || undefined} insertUrl={insertUrlWithVersion || undefined} bedSize={config.bed_size} />
+                <BinPreview3D
+                  stlUrl={stlUrlWithVersion}
+                  splitUrls={splitUrlsWithVersion || undefined}
+                  insertUrl={insertUrlWithVersion || undefined}
+                  bedSize={config.bed_size}
+                  splitCols={splitField.cols}
+                  splitRows={splitField.rows}
+                />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-text-muted text-xs gap-2">
                   {generating ? (

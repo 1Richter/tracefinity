@@ -101,6 +101,9 @@ export interface GenerateResponse {
   stl_urls?: string[]
   threemf_url?: string
   split_count?: number
+  /** field the parts were cut into; both 0 when there is no regular one */
+  split_cols?: number
+  split_rows?: number
   zip_url?: string | null
   insert_stl_url?: string | null
   warning?: string | null

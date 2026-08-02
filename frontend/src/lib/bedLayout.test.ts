@@ -1,57 +1,84 @@
 import { describe, expect, it } from 'vitest'
-import { layOutOnBed } from './bedLayout'
+import { layOutCutField } from './bedLayout'
 
 const GAP = 10
 
-describe('layOutOnBed', () => {
-  it('keeps parts that fit the bed in one row', () => {
-    const sizes = [{ w: 100, d: 80 }, { w: 100, d: 80 }]
+/**
+ * What split_bin actually produces, not synthetic sizes: it makes each slab as
+ * large as the bed allows, so a 420mm bin becomes 2x2 of ~210mm on a 256mm bed
+ * and 3x3 of ~140mm on a 150mm bed. Sizes measured from the generated STLs.
+ */
+const SPLIT_2X2 = Array.from({ length: 4 }, () => ({ w: 209.8, d: 209.8 }))
+const SPLIT_3X3 = Array.from({ length: 9 }, () => ({ w: 147, d: 147 }))
 
-    const offsets = layOutOnBed(sizes, 256, GAP)
+describe('layOutCutField', () => {
+  it('places a 2x2 split in two columns and two rows', () => {
+    const offsets = layOutCutField(SPLIT_2X2, 2, 2, GAP)
 
-    expect(offsets).toHaveLength(2)
-    expect(offsets[0].y).toBe(offsets[1].y)
-    expect(offsets[1].x - offsets[0].x).toBe(100 + GAP)
-    // centred on the origin
-    expect(offsets[0].x).toBe(-(100 + GAP) / 2)
+    // column-major: [col0row0, col0row1, col1row0, col1row1]
+    expect(offsets[0].x).toBe(offsets[1].x)
+    expect(offsets[2].x).toBe(offsets[3].x)
+    expect(offsets[0].y).toBe(offsets[2].y)
+    expect(offsets[1].y).toBe(offsets[3].y)
+    expect(offsets[2].x - offsets[0].x).toBeCloseTo(209.8 + GAP)
+    expect(offsets[1].y - offsets[0].y).toBeCloseTo(209.8 + GAP)
   })
 
-  it('wraps to a second row when the bed is full', () => {
-    const sizes = Array.from({ length: 4 }, () => ({ w: 120, d: 120 }))
+  it('keeps a 3x3 split three parts wide instead of stacking nine rows', () => {
+    const offsets = layOutCutField(SPLIT_3X3, 3, 3, GAP)
 
-    const offsets = layOutOnBed(sizes, 256, GAP)
-
-    // two per row: 120 + 10 + 120 = 250 <= 256, a third would not fit
-    expect(offsets[0].y).toBe(offsets[1].y)
-    expect(offsets[2].y).toBe(offsets[3].y)
-    expect(offsets[0].y).toBeGreaterThan(offsets[2].y)
-    expect(offsets[0].y - offsets[2].y).toBe(120 + GAP)
+    expect(new Set(offsets.map(o => o.x)).size).toBe(3)
+    expect(new Set(offsets.map(o => o.y)).size).toBe(3)
   })
 
-  it('centres a 2x2 layout on the origin', () => {
-    const sizes = Array.from({ length: 4 }, () => ({ w: 120, d: 120 }))
+  it('centres the field on the origin', () => {
+    const offsets = layOutCutField(SPLIT_3X3, 3, 3, GAP)
 
-    const offsets = layOutOnBed(sizes, 256, GAP)
-
-    const xs = offsets.map(o => o.x)
-    const ys = offsets.map(o => o.y)
-    expect(xs.reduce((a, b) => a + b, 0)).toBeCloseTo(0)
-    expect(ys.reduce((a, b) => a + b, 0)).toBeCloseTo(0)
+    expect(offsets.reduce((sum, o) => sum + o.x, 0)).toBeCloseTo(0)
+    expect(offsets.reduce((sum, o) => sum + o.y, 0)).toBeCloseTo(0)
   })
 
-  it('gives a part wider than the bed its own row', () => {
-    const sizes = [{ w: 300, d: 100 }, { w: 50, d: 40 }]
+  it('counts rows from the low end of the axis, as the backend cuts them', () => {
+    const offsets = layOutCutField(SPLIT_2X2, 2, 2, GAP)
 
-    const offsets = layOutOnBed(sizes, 256, GAP)
+    expect(offsets[0].y).toBeLessThan(offsets[1].y)
+  })
 
-    expect(offsets[0].y).not.toBe(offsets[1].y)
+  it('sizes each column and row to its largest part', () => {
+    // a fractional grid leaves a narrower trailing slab
+    const sizes = [
+      { w: 200, d: 200 }, { w: 200, d: 90 },
+      { w: 80, d: 200 }, { w: 80, d: 90 },
+    ]
+
+    const offsets = layOutCutField(sizes, 2, 2, GAP)
+
+    expect(offsets[2].x - offsets[0].x).toBeCloseTo(200 / 2 + GAP + 80 / 2)
+    expect(offsets[1].y - offsets[0].y).toBeCloseTo(200 / 2 + GAP + 90 / 2)
+  })
+
+  it('falls back to a single row when there is no regular field', () => {
+    // separated partial-bin islands report 0 x 0
+    const sizes = [{ w: 100, d: 80 }, { w: 60, d: 40 }, { w: 30, d: 30 }]
+
+    const offsets = layOutCutField(sizes, 0, 0, GAP)
+
+    expect(new Set(offsets.map(o => o.y)).size).toBe(1)
+    expect(offsets[1].x).toBeGreaterThan(offsets[0].x)
+    expect(offsets[2].x).toBeGreaterThan(offsets[1].x)
+  })
+
+  it('falls back when the field disagrees with the part count', () => {
+    const offsets = layOutCutField(SPLIT_2X2, 3, 3, GAP)
+
+    expect(new Set(offsets.map(o => o.y)).size).toBe(1)
   })
 
   it('handles a single part', () => {
-    expect(layOutOnBed([{ w: 100, d: 50 }], 256, GAP)).toEqual([{ x: 0, y: 0 }])
+    expect(layOutCutField([{ w: 100, d: 50 }], 1, 1, GAP)).toEqual([{ x: 0, y: 0 }])
   })
 
   it('handles an empty list', () => {
-    expect(layOutOnBed([], 256, GAP)).toEqual([])
+    expect(layOutCutField([], 0, 0, GAP)).toEqual([])
   })
 })
