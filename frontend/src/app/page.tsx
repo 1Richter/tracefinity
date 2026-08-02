@@ -723,7 +723,9 @@ export default function HomePage() {
           {!collapsedSections.bins && (
             visibleBins.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {visibleBins.map(bin => (
+                {visibleBins.map(bin => {
+                  const projectLabel = binProjectLabel(bin, projectNameById)
+                  return (
                   <div
                     key={bin.id}
                     onClick={() => router.push(`/bins/${bin.id}`)}
@@ -735,17 +737,17 @@ export default function HomePage() {
                       ) : (
                         <Package className="w-6 h-6 text-text-muted/20" />
                       )}
-                      {binProjectLabel(bin, projectNameById) && (
+                      {projectLabel && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            if (bin.project_id) router.push(`/projects/${bin.project_id}`)
+                            router.push(`/projects/${bin.project_id}`)
                           }}
                           className="absolute top-2 left-2 max-w-[calc(100%-3.5rem)] glass-sm rounded-full px-2 py-0.5 text-[10px] text-text-secondary hover:text-accent transition-colors flex items-center gap-1 cursor-pointer"
-                          title={`Belongs to project ${binProjectLabel(bin, projectNameById)}`}
+                          title={`Belongs to project ${projectLabel}`}
                         >
                           <Folder className="w-2.5 h-2.5 flex-shrink-0" />
-                          <span className="truncate">{binProjectLabel(bin, projectNameById)}</span>
+                          <span className="truncate">{projectLabel}</span>
                         </button>
                       )}
                       <div className="absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
@@ -775,7 +777,8 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div className="glass rounded-[8px] p-8 text-center">
