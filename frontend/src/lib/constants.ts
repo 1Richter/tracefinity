@@ -11,7 +11,10 @@ export const ZOOM_FACTOR = 1.15
 export const DEFAULT_CUTOUT_DEPTH = 20
 export const DOCS_BASE_URL = 'https://github.com/tracefinity/tracefinity/blob/main/docs'
 
-/** Keep a grid size inside the range the backend accepts. */
+/**
+ * Keep a grid size inside the range the backend accepts. Only the range:
+ * validate_grid also wants 0.5 steps, which every caller already snaps to.
+ */
 export function clampGridUnits(units: number): number {
   return Math.min(GRID_MAX_UNITS, Math.max(GRID_MIN_UNITS, units))
 }
