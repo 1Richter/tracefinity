@@ -73,6 +73,46 @@ def test_unload_during_use_leaves_the_handed_out_model_usable():
     assert model == ["weights"]
 
 
+def test_a_use_that_beats_a_fired_timer_keeps_the_model():
+    # Timer.cancel() does nothing once the timer thread has entered the
+    # callback, so a get() landing in that window arms a fresh timer that the
+    # in-flight callback then cancels on its way to unloading. Calling the
+    # callback by hand right after a use reproduces exactly that interleaving.
+    slot = ModelSlot(lambda: object(), "test", idle_seconds=5)
+
+    model = slot.get()
+    slot._unload_if_idle()
+
+    assert slot.loaded is True
+    assert slot.get() is model
+
+    slot.unload()
+
+
+def test_the_timer_callback_unloads_once_the_model_is_really_idle():
+    slot = ModelSlot(lambda: "model", "test", idle_seconds=0.01)
+
+    slot.get()
+    time.sleep(0.05)
+    slot._unload_if_idle()
+
+    assert slot.loaded is False
+
+
+def test_unload_runs_the_release_hook_only_when_something_was_loaded():
+    released = []
+    slot = ModelSlot(
+        lambda: "model", "test", idle_seconds=0, on_unload=lambda: released.append(1)
+    )
+
+    slot.unload()
+    assert released == []
+
+    slot.get()
+    slot.unload()
+    assert released == [1]
+
+
 def test_unload_is_idempotent():
     slot = ModelSlot(lambda: "model", "test", idle_seconds=0)
 

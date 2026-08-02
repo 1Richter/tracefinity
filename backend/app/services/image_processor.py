@@ -135,6 +135,9 @@ class ImageProcessor:
         from PIL import Image
         from rembg import remove
 
+        if not self._onnx_available:
+            raise RuntimeError("U2-Net needs ONNX Runtime, which is unavailable on this CPU")
+
         img = Image.open(image_path).convert("RGB")
         result = remove(img, session=self._tool_mask_model.get())
         alpha = np.array(result)[:, :, 3]

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -544,7 +545,9 @@ async def upload_image(request: Request, image: UploadFile, user_id: str = Depen
     user_sessions.ensure_open()
     image_path.write_bytes(content)
 
-    corners = image_processor.detect_paper_corners(str(image_path))
+    # U2-Net loads lazily and unloads when idle, so this can cost a model load
+    # on top of the detection itself; neither belongs on the event loop
+    corners = await asyncio.to_thread(image_processor.detect_paper_corners, str(image_path))
     corner_points = [Point(x=c[0], y=c[1]) for c in corners] if corners else None
 
     user_sessions.set(session_id, Session(

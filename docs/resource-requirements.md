@@ -12,9 +12,13 @@ Two models are used: a tracer for tool outlines and U2-Net Portable for paper de
 | Gemini API | none (remote) | ~2GB |
 | Replicate / fal | none (remote) | ~2GB |
 
-RAM figures are measured in Linux containers with both models loaded -- that is the peak, not the resting state.
+RAM figures are measured in Linux containers with both models loaded -- that is the peak, not the resting state. Size `--memory` for the peak.
 
-Models load on first use and are dropped again after 5 minutes without a request (`MODEL_IDLE_TIMEOUT_SECONDS`, `0` disables unloading and keeps them resident). An idle instance falls back to the footprint of the plain Python process, and the next upload or trace pays the load cost again. Set the timeout to `0` on a machine with enough RAM that traces often.
+Models load on first use and are dropped again after 5 minutes without a request (`MODEL_IDLE_TIMEOUT_SECONDS`, `0` disables unloading and keeps them resident). Unloading releases the weights and the allocator arena behind them, which is the part that scales with the tracer: U2-Net Portable is around 200MB of the ~2GB floor. The rest of the floor is the interpreter with ONNX Runtime, torch, OpenCV and numpy imported, and none of that goes away -- an idle instance does **not** drop to the footprint of a bare Python process. Expect the idle saving to be roughly the tracer column above, not the total.
+
+The next upload or trace pays the load cost again, on a worker thread so it never blocks other requests. Set the timeout to `0` on a machine that has the RAM and traces often.
+
+On GPU (`TRACEFINITY_ONNX_PROVIDER=cuda` or InSPyReNet on CUDA), unloading also empties torch's caching allocator, since freed CUDA blocks otherwise stay reserved by the process rather than returning to the driver.
 
 ## CPU
 

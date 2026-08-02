@@ -206,7 +206,19 @@ class AITracer:
                 logging.info("loading %s on %s", label, device)
                 return Remover(mode="base", device=device)
 
-            slot = ModelSlot(load_inspyrenet, label, settings.model_idle_timeout_seconds)
+            def release_torch_cache():
+                # torch returns freed CUDA blocks to its own caching allocator,
+                # not to the driver, so dropping the model alone frees no VRAM
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            slot = ModelSlot(
+                load_inspyrenet,
+                label,
+                settings.model_idle_timeout_seconds,
+                on_unload=release_torch_cache,
+            )
             self._saliency_backend = ("inspyrenet", slot)
         else:
             raise ValueError(f"unsupported saliency model: {name}")
@@ -246,22 +258,25 @@ class AITracer:
 
     async def _saliency_on_image(self, pil_img):
         """run the configured saliency backend, return foreground mask (fg=255)."""
-        from app.services.model_slot import ModelSlot
-
         kind, handle = self._saliency_backend
         if kind in REMOTE_TRACERS:
             return await self._saliency_remote(pil_img, handle)
-        # local weights live in a slot; get() loads them if an idle unload
-        # dropped them since the last trace
-        if isinstance(handle, ModelSlot):
-            handle = handle.get()
+        # a cold call pays for a full model load, because the weights load
+        # lazily and an idle unload may have dropped them since the last trace.
+        # Keep the load and the inference off the event loop, or one trace
+        # stalls every other request -- including /health -- until it finishes.
+        return await asyncio.to_thread(self._saliency_local, pil_img, kind, handle)
+
+    def _saliency_local(self, pil_img, kind, slot):
+        """blocking half of _saliency_on_image, run in a worker thread."""
+        model = slot.get()
         if kind == "rembg":
             from rembg import remove
-            result = remove(pil_img, session=handle)
+            result = remove(pil_img, session=model)
             alpha = np.array(result)[:, :, 3]
             _, binary = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
             return binary
-        result = handle.process(pil_img, type="map")
+        result = model.process(pil_img, type="map")
         mask_np = np.array(result.convert("L"))
         _, binary = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)
         return binary

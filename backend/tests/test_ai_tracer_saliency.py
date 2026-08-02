@@ -28,6 +28,31 @@ def test_local_tracer_defers_the_weight_load(monkeypatch):
     assert handle.loaded is False
 
 
+def test_local_saliency_runs_off_the_event_loop():
+    # a cold trace loads the model, which takes tens of seconds for the larger
+    # tracers. On the event loop that stalls every other request, /health
+    # included, which reads as a dead instance to a liveness probe.
+    import threading
+
+    from app.services.model_slot import ModelSlot
+
+    t = AITracer(model="gemini-x")
+    t._saliency_backend = ("rembg", ModelSlot(lambda: "session", "test", idle_seconds=0))
+
+    ran_on = {}
+
+    def fake_local(pil_img, kind, slot):
+        ran_on["thread"] = threading.get_ident()
+        slot.get()
+        return np.zeros((4, 4), np.uint8)
+
+    t._saliency_local = fake_local
+
+    asyncio.run(t._saliency_on_image(Image.new("RGB", (4, 4))))
+
+    assert ran_on["thread"] != threading.get_ident()
+
+
 def test_remote_tracer_builds_config_and_calls_module(monkeypatch):
     import app.services.remote_saliency as rs
 

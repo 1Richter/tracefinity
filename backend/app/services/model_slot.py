@@ -2,6 +2,7 @@
 import gc
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Generic, TypeVar
 
@@ -21,16 +22,25 @@ class ModelSlot(Generic[T]):
     idle_seconds <= 0 keeps the model loaded for the lifetime of the process.
     """
 
-    def __init__(self, loader: Callable[[], T], label: str, idle_seconds: float):
+    def __init__(
+        self,
+        loader: Callable[[], T],
+        label: str,
+        idle_seconds: float,
+        on_unload: Callable[[], None] | None = None,
+    ):
         self._loader = loader
         self._label = label
         self._idle_seconds = idle_seconds
+        self._on_unload = on_unload
         self._lock = threading.Lock()
         self._model: T | None = None
         self._timer: threading.Timer | None = None
+        self._last_used = 0.0
 
     @property
     def loaded(self) -> bool:
+        # advisory only: an unload can land between this read and its use
         return self._model is not None
 
     def get(self) -> T:
@@ -39,6 +49,7 @@ class ModelSlot(Generic[T]):
                 logger.info("loading %s", self._label)
                 self._model = self._loader()
             model = self._model
+            self._last_used = time.monotonic()
             self._arm_timer()
         return model
 
@@ -49,16 +60,33 @@ class ModelSlot(Generic[T]):
             if self._model is None:
                 return
             self._model = None
-        logger.info("unloaded %s after %.0fs idle", self._label, self._idle_seconds)
-        # ONNX and torch hand their arenas back once the last reference goes
+        logger.info("unloaded %s", self._label)
+        # ONNX hands its arena back once the last reference goes; torch keeps
+        # freed CUDA blocks in its caching allocator, so a GPU loader passes an
+        # on_unload that empties it
+        if self._on_unload is not None:
+            self._on_unload()
         gc.collect()
 
-    def _arm_timer(self) -> None:
+    def _unload_if_idle(self) -> None:
+        """Timer callback. Timer.cancel() does nothing once the timer has
+        already fired, so a get() that lands in that window would otherwise be
+        followed straight away by the unload it thought it had cancelled."""
+        with self._lock:
+            idle_for = time.monotonic() - self._last_used
+            if self._model is not None and idle_for < self._idle_seconds:
+                self._arm_timer(self._idle_seconds - idle_for)
+                return
+        self.unload()
+
+    def _arm_timer(self, delay: float | None = None) -> None:
         """caller holds the lock"""
         self._cancel_timer()
         if self._idle_seconds <= 0:
             return
-        self._timer = threading.Timer(self._idle_seconds, self.unload)
+        self._timer = threading.Timer(
+            self._idle_seconds if delay is None else delay, self._unload_if_idle
+        )
         self._timer.daemon = True
         self._timer.start()
 
