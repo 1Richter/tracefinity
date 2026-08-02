@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { gridUnitsForSpan, pointBounds } from './binGrid'
 import { clampGridUnits, GRID_MAX_UNITS } from './constants'
 
-const MARGIN = 2 * 1.2 + 2 * 0.5 + 0.5 // wall + clearance, the bin editor's default
+// FACTORY_BIN_CONFIG's wall_thickness and cutout_clearance, doubled, plus the
+// 0.5mm the bin editor adds
+const MARGIN = 2 * 1.6 + 2 * 1.0 + 0.5
 
 describe('pointBounds', () => {
   it('returns null when there is nothing to measure', () => {

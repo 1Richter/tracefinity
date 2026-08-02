@@ -217,11 +217,11 @@ export default function BinPage() {
   // from the tools rather than from the clamp: a stored flag survives deleting the
   // oversized tool, and adding a small one afterwards would wrongly clear it.
   const gridClamped = useMemo(() => {
-    if (!toolBounds) return false
+    if (!autoSize || !toolBounds) return false
     const wantX = gridUnitsForSpan(toolBounds.maxX - toolBounds.minX, gridMargin, gridSnap)
     const wantY = gridUnitsForSpan(toolBounds.maxY - toolBounds.minY, gridMargin, gridSnap)
     return wantX > GRID_MAX_UNITS || wantY > GRID_MAX_UNITS
-  }, [toolBounds, gridMargin, gridSnap])
+  }, [autoSize, toolBounds, gridMargin, gridSnap])
 
   // auto-size: fit grid to bounding box of all placed tools, recentre if grid changes
   useEffect(() => {
@@ -281,7 +281,12 @@ export default function BinPage() {
 
   const handleAddTool = useCallback((tool: PlacedTool) => {
     const bounds = pointBounds([tool.points])
-    if (!bounds) return
+    if (!bounds) {
+      // nothing to measure, so nothing to grow or centre against; place it as
+      // it came rather than dropping a tool the user asked for
+      setPlacedTools(prev => [...prev, tool])
+      return
+    }
     const { minX, minY, maxX, maxY } = bounds
 
     // grow to fit the new tool, never shrink below what the bin already is
@@ -437,10 +442,10 @@ export default function BinPage() {
           )}
           {gridClamped && (
             <InfoBanner>
-              A tool needs more room than the maximum bin size of {GRID_MAX_UNITS}x{GRID_MAX_UNITS}u
-              ({GRID_MAX_UNITS * GRID_UNIT} x {GRID_MAX_UNITS * GRID_UNIT} mm), so the grid stopped
-              growing and anything past the wall is cut off in the STL. Move that tool into a bin
-              of its own.
+              These tools need more room than the maximum bin size of {GRID_MAX_UNITS}x{GRID_MAX_UNITS}u
+              ({GRID_MAX_UNITS * GRID_UNIT} x {GRID_MAX_UNITS * GRID_UNIT} mm), so auto-size stopped
+              growing the grid and anything past the wall is cut off in the STL. Split them across
+              two bins, and check that no single tool is longer than {GRID_MAX_UNITS * GRID_UNIT}mm.
             </InfoBanner>
           )}
           {splitCount > 1 && (
