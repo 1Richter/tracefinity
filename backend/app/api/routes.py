@@ -413,20 +413,41 @@ def _build_bin_from_tools(
     )
 
 
-def _split_field(gen_req: GenerateRequest, stl_urls: list[str]) -> tuple[int, int]:
-    """Columns and rows the parts were cut into, for the 3D preview layout.
+def _write_hash(hash_path: Path, input_hash: str, cols: int, rows: int) -> None:
+    """Record the input hash plus the field the parts were cut in.
 
-    Reported only when the cut plan accounts for every exported part: partial
-    bins export disconnected islands instead of a grid of slabs, and a slab
-    that came out empty leaves a hole in the field. In those cases the preview
-    falls back to a plain row.
+    The field cannot be re-derived on a cache hit: only the export knows
+    whether it cut slabs or decomposed a partial bin into islands, and the two
+    can produce the same number of files. Store it next to the hash instead.
     """
-    if not stl_urls:
-        return (0, 0)
-    cols, rows = stl_generator.split_field(gen_req, gen_req.bed_size)
-    if cols * rows != len(stl_urls):
-        return (0, 0)
-    return (cols, rows)
+    hash_path.write_text(f"{input_hash}\n{cols} {rows}")
+
+
+def _read_hash(hash_path: Path) -> tuple[str, int, int]:
+    """Input hash and cut field from a hash file. A file written before the
+    field was recorded reports no field, so the preview falls back to a row."""
+    lines = hash_path.read_text().splitlines()
+    if not lines:
+        return ("", 0, 0)
+    try:
+        cols, rows = (int(n) for n in lines[1].split())
+    except (IndexError, ValueError):
+        cols = rows = 0
+    return (lines[0], cols, rows)
+
+
+def _sorted_part_paths(user_path: Path, entity_id: str) -> list[Path]:
+    """Exported parts in the order they were written.
+
+    Sorted by the trailing index rather than lexically: parts are zero-padded
+    now, but a bin generated before that still has _part10 sorting ahead of
+    _part2 on disk.
+    """
+    def index(path: Path) -> int:
+        digits = path.stem.rsplit("_part", 1)[-1]
+        return int(digits) if digits.isdigit() else 0
+
+    return sorted(user_path.glob(f"outputs/{entity_id}_part*.stl"), key=index)
 
 
 def _run_generate(
@@ -462,10 +483,12 @@ def _run_generate(
     zip_path = user_path / "outputs" / f"{entity_id}_parts.zip"
     insert_path = user_path / "outputs" / f"{entity_id}_insert.stl"
 
-    if output_path.exists() and hash_path.exists() and hash_path.read_text() == input_hash:
-        part_paths = sorted(user_path.glob(f"outputs/{entity_id}_part*.stl"))
+    cached_hash, cached_cols, cached_rows = (
+        _read_hash(hash_path) if hash_path.exists() else ("", 0, 0)
+    )
+    if output_path.exists() and cached_hash == input_hash:
+        part_paths = _sorted_part_paths(user_path, entity_id)
         stl_urls = [f"/storage/{user_id}/outputs/{p.name}" for p in part_paths]
-        cached_cols, cached_rows = _split_field(gen_req, stl_urls)
         insert_stl_url = (
             f"/storage/{user_id}/outputs/{entity_id}_insert.stl"
             if insert_path.exists() else None
@@ -496,9 +519,10 @@ def _run_generate(
     stl_urls: list[str] = []
     zip_url = None
     output_dir = str(user_path / "outputs")
-    part_paths = stl_generator.export_split_parts(
+    split = stl_generator.export_split_parts(
         bin_body, text_body, gen_req, gen_req.bed_size, output_dir, entity_id
     )
+    part_paths = split.paths
     if part_paths:
         stl_urls = [f"/storage/{user_id}/outputs/{Path(p).name}" for p in part_paths]
         part_bytes = [(Path(p).name, Path(p).read_bytes()) for p in part_paths]
@@ -532,21 +556,19 @@ def _run_generate(
         else:
             warning = "Insert generation failed. Try re-tracing the tools or adjusting their placement."
 
-    hash_path.write_text(input_hash)
+    _write_hash(hash_path, input_hash, split.cols, split.rows)
 
     threemf_url = None
     if threemf_path.exists():
         threemf_url = f"/storage/{user_id}/outputs/{entity_id}.3mf"
-
-    split_cols, split_rows = _split_field(gen_req, stl_urls)
 
     return GenerateResponse(
         stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",
         stl_urls=stl_urls,
         threemf_url=threemf_url,
         split_count=max(1, len(stl_urls)),
-        split_cols=split_cols,
-        split_rows=split_rows,
+        split_cols=split.cols,
+        split_rows=split.rows,
         zip_url=zip_url,
         insert_stl_url=insert_stl_url,
         warning=warning,

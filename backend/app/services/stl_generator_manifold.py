@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import time
+from typing import NamedTuple
 
 import numpy as np
 
@@ -1322,6 +1323,23 @@ def _export_3mf(bin_m, text_m, path: str) -> None:
 
 # ── main generator class ──────────────────────────────────────────────────────
 
+class SplitParts(NamedTuple):
+    """One STL per printable piece, plus the shape they were cut in.
+
+    ``paths`` is column-major over the field -- all rows of the lowest x column
+    first, each axis counted from its low end -- so piece ``i`` sits at column
+    ``i // rows``, row ``i % rows``. The 3D preview lays them out that way.
+
+    ``cols`` and ``rows`` are 0 when there is no field to speak of: no split at
+    all, a partial bin decomposed into islands that keep their own positions,
+    or a cut that dropped an empty slab and left a hole in the grid.
+    """
+
+    paths: list[str]
+    cols: int
+    rows: int
+
+
 class ManifoldSTLGenerator:
     def generate_bin(
         self,
@@ -1561,27 +1579,16 @@ class ManifoldSTLGenerator:
         bed_size: float,
         output_dir: str,
         session_id: str,
-    ) -> list[str]:
-        """Split completed bin into bed-sized pieces. Returns list of output paths."""
-        import math
-
-        span_x, span_y = (
-            (config.grid_x, config.grid_y)
-            if _partial_bins_connect_bases(config)
-            else _effective_grid_span(config)
-        )
-        bin_width = span_x * GF_GRID
-        bin_depth = span_y * GF_GRID
-
-        fits_diagonal = (bin_width + bin_depth) / math.sqrt(2) <= bed_size
-        if fits_diagonal:
-            return []
+    ) -> "SplitParts":
+        """Cut the bin into bed-sized pieces and export one STL each."""
+        if self._fits_bed_diagonally(config, bed_size):
+            return SplitParts([], 0, 0)
 
         x_cuts = self._compute_split_points(config.grid_x * GF_GRID, config.grid_x, bed_size)
         y_cuts = self._compute_split_points(config.grid_y * GF_GRID, config.grid_y, bed_size)
 
         if not x_cuts and not y_cuts:
-            return []
+            return SplitParts([], 0, 0)
 
         part = bin_body + text_body if text_body else bin_body
 
@@ -1590,22 +1597,39 @@ class ManifoldSTLGenerator:
         for xp in x_pieces:
             pieces.extend(self._split_along_axis(xp, y_cuts, axis='y'))
 
-        return self._export_pieces(pieces, output_dir, session_id)
+        cols, rows = len(x_cuts) + 1, len(y_cuts) + 1
+        paths = self._export_pieces(pieces, output_dir, session_id)
+        # an empty slab is dropped rather than exported, which leaves a hole in
+        # the field; report no field at all rather than a wrong one
+        if len(paths) != cols * rows:
+            cols = rows = 0
+        return SplitParts(paths, cols, rows)
 
     # a 6x6 field already means 36 prints of one bin; past that the request is
     # a mistake rather than a plan, and each part costs an STL on disk
     MAX_SPLIT_PARTS = 36
 
-    def split_field(self, config: GenerateRequest, bed_size: float) -> tuple[int, int]:
-        """Columns and rows split_bin cuts the bin into, without doing the cut.
+    @staticmethod
+    def _fits_bed_diagonally(config: GenerateRequest, bed_size: float) -> bool:
+        """A bin that fits the bed corner to corner is never cut."""
+        import math
 
-        Parts come out column-major -- all rows of the lowest x column first --
-        so a part's index is ``col * rows + row``, both counted from the low end
-        of the axis. The preview uses this to place the pieces the way they are
-        actually cut; the route drops it when the count disagrees, which a
-        partial bin with an empty slab can cause.
+        span_x, span_y = (
+            (config.grid_x, config.grid_y)
+            if _partial_bins_connect_bases(config)
+            else _effective_grid_span(config)
+        )
+        return (span_x * GF_GRID + span_y * GF_GRID) / math.sqrt(2) <= bed_size
+
+    def split_field(self, config: GenerateRequest, bed_size: float) -> tuple[int, int]:
+        """Columns and rows split_bin would cut the bin into, without cutting.
+
+        Used to refuse an unreasonable part count before anything is generated.
+        The answer the preview gets comes from the export itself (SplitParts),
+        because only the export knows whether it took the bed-split path or
+        decomposed a partial bin into islands.
         """
-        if bed_size <= 0:
+        if bed_size <= 0 or self._fits_bed_diagonally(config, bed_size):
             return (0, 0)
         x_cuts = self._compute_split_points(config.grid_x * GF_GRID, config.grid_x, bed_size)
         y_cuts = self._compute_split_points(config.grid_y * GF_GRID, config.grid_y, bed_size)
@@ -1632,7 +1656,11 @@ class ManifoldSTLGenerator:
         output_dir: str,
         session_id: str,
     ) -> list[str]:
-        """Export each disconnected manifold volume as its own STL file."""
+        """Export each disconnected manifold volume as its own STL file.
+
+        These are islands, not slabs: they keep their own positions in the bin
+        and form no grid, so callers get no field for them.
+        """
         part = bin_body + text_body if text_body and not text_body.is_empty() else bin_body
         pieces = [p for p in part.decompose() if not p.is_empty()]
         if len(pieces) < 2:
@@ -1648,15 +1676,15 @@ class ManifoldSTLGenerator:
         bed_size: float,
         output_dir: str,
         session_id: str,
-    ) -> list[str]:
+    ) -> "SplitParts":
         """Export per-piece STLs for disconnected partial bins or bed-sized splits."""
         if _exports_separated_partial_parts(config):
             paths = self.export_separated_parts(bin_body, text_body, output_dir, session_id)
             if paths:
-                return paths
+                return SplitParts(paths, 0, 0)
         if bed_size > 0:
             return self.split_bin(bin_body, text_body, config, bed_size, output_dir, session_id)
-        return []
+        return SplitParts([], 0, 0)
 
     @staticmethod
     def _split_along_axis(part, cut_points: list[float], axis: str) -> list:

@@ -231,5 +231,5 @@ def test_split_half_unit_bin(tmp_path: Path):
     )
     gen = ManifoldSTLGenerator()
     body, text = gen.generate_bin([], config, str(tmp_path / "big.stl"))
-    parts = gen.split_bin(body, text, config, 100, str(tmp_path), "test")
+    parts = gen.split_bin(body, text, config, 100, str(tmp_path), "test").paths
     assert len(parts) >= 2

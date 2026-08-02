@@ -143,7 +143,7 @@ def test_partial_bins_connect_keeps_single_piece(tmp_path: Path):
     connect_body, _ = generator.generate_bin([], connect_config, str(tmp_path / "connect.stl"))
 
     assert len(cut_body.decompose()) >= 2
-    assert generator.export_split_parts(connect_body, None, connect_config, 0, str(tmp_path), "connect") == []
+    assert generator.export_split_parts(connect_body, None, connect_config, 0, str(tmp_path), "connect").paths == []
     assert connect_body.volume() > cut_body.volume()
     assert connect_body.volume() < generator.generate_bin(
         [],
@@ -170,7 +170,7 @@ def test_partial_bin_split_uses_enabled_span(tmp_path: Path):
         "partial",
     )
 
-    assert parts == []
+    assert parts.paths == []
 
 
 def test_partial_bins_cut_exports_separated_stls(tmp_path: Path):
@@ -185,7 +185,7 @@ def test_partial_bins_cut_exports_separated_stls(tmp_path: Path):
     )
 
     body, _ = generator.generate_bin([], config, str(tmp_path / "full.stl"))
-    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial")
+    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial").paths
 
     assert len(paths) >= 2
     assert all(Path(p).exists() for p in paths)
@@ -203,7 +203,7 @@ def test_partial_bins_connect_skips_separated_export(tmp_path: Path):
     )
 
     body, _ = generator.generate_bin([], config, str(tmp_path / "full.stl"))
-    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial")
+    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial").paths
 
     assert paths == []
 
@@ -250,7 +250,7 @@ def test_partial_bins_retain_wall_adds_perimeter_material(tmp_path: Path):
     )
 
     assert retain_body.volume() > connect_body.volume()
-    assert generator.export_split_parts(retain_body, None, base.model_copy(update={"partial_bins_retain_wall": True}), 0, str(tmp_path), "retain") == []
+    assert generator.export_split_parts(retain_body, None, base.model_copy(update={"partial_bins_retain_wall": True}), 0, str(tmp_path), "retain").paths == []
 
 
 def test_partial_bins_retain_wall_disabled_without_connect():
@@ -286,7 +286,7 @@ def test_connect_mode_split_uses_full_grid_footprint(tmp_path: Path):
     )
 
     body, _ = generator.generate_bin([], config, str(tmp_path / "connect.stl"))
-    parts = generator.split_bin(body, None, config, config.bed_size, str(tmp_path), "connect")
+    parts = generator.split_bin(body, None, config, config.bed_size, str(tmp_path), "connect").paths
 
     assert parts != []
 

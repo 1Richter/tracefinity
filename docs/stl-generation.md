@@ -96,7 +96,11 @@ Large bins are split along grid boundaries using manifold3d `split_by_plane`. Di
 
 Each axis is cut into as many slabs as the bed needs (`_compute_split_points`, half-grid granularity), so the result is an N x M field of parts -- a 420mm bin on a 150mm bed becomes 9. `_split_along_axis` walks the cuts low to high and keeps the slab below each one, carrying the part above it into the next iteration.
 
-Parts are written column-major: all rows of the lowest x column first, each axis counted from its low end, so a part's index is `col * rows + row`. `split_field` reports that shape without doing the cut, and `GenerateResponse.split_cols` / `split_rows` pass it to the 3D preview so the pieces are laid out the way they are actually cut. Both are `0` when there is no split, or when the parts do not form a regular field -- separated partial-bin islands, or a slab that came out empty.
+Parts are written column-major: all rows of the lowest x column first, each axis counted from its low end, so a part's index is `col * rows + row`. `export_split_parts` returns that shape alongside the paths as a `SplitParts`, and `GenerateResponse.split_cols` / `split_rows` carry it to the frontend. `cols` and `rows` are `0` when there is no field to describe: no split, separated partial-bin islands (which keep their own positions and form no grid), or a cut that dropped an empty slab and left a hole.
+
+Only the export knows which of those happened, and an island count can coincide with a field size, so the field cannot be re-derived from the config and the part count. On a cache hit it comes back from the second line of the `.hash` file. A hash file written before that line existed reports no field, which is safe.
+
+`split_field` computes the same shape *without* cutting, but only for the pre-generation part-count guard. It mirrors the diagonal-fit gate, so it agrees with `split_bin` about when nothing is cut at all.
 
 `bed_size` is validated to 0 (no splitting) or 50-1000mm, and the part count is capped at `MAX_SPLIT_PARTS` (36). Individually legal values can still combine into hundreds of pieces, and each one costs an STL on disk, so the route refuses before generating rather than after writing them all.
 
