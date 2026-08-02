@@ -170,6 +170,17 @@ function SplitModels(
     [pieces, cols, rows],
   )
 
+  // the camera fits once on load, but the field can be several times the size
+  // of a single bin and changes shape with the bed size, so ask for a refit
+  useEffect(() => {
+    if (pieces.length === 0) return
+    const t = setTimeout(
+      () => window.dispatchEvent(new CustomEvent('bin-preview-view', { detail: 'fit' })),
+      50,
+    )
+    return () => clearTimeout(t)
+  }, [pieces, offsets])
+
   if (pieces.length === 0) return null
 
   return (
