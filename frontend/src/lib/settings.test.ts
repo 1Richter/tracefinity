@@ -22,8 +22,10 @@ function installLocalStorage() {
 const TRACERS = [{ id: 'isnet' }, { id: 'birefnet-lite' }, { id: 'gemini' }]
 
 describe('tracer persistence', () => {
+  let storage: Storage
+
   beforeEach(() => {
-    installLocalStorage()
+    storage = installLocalStorage()
   })
 
   afterEach(() => {
@@ -68,7 +70,6 @@ describe('tracer persistence', () => {
   })
 
   it('survives a storage backend that refuses to write', () => {
-    const storage = installLocalStorage()
     vi.spyOn(storage, 'setItem').mockImplementation(() => {
       throw new Error('QuotaExceededError')
     })
@@ -78,7 +79,7 @@ describe('tracer persistence', () => {
   })
 
   it('ignores a stored value of the wrong type', () => {
-    installLocalStorage().setItem('tracefinity-settings', JSON.stringify({ lastTracer: 42 }))
+    storage.setItem('tracefinity-settings', JSON.stringify({ lastTracer: 42 }))
 
     expect(getLastTracer()).toBeNull()
   })
