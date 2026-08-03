@@ -80,6 +80,19 @@ describe('BinEditor cutout depth cap', () => {
     expect(screen.getByTestId('max-depth-hint').className).toContain('text-amber-400')
   })
 
+  it('raises a too-shallow depth without flagging the cap', () => {
+    const { canvas, onPlacedToolsChange } = renderEditor()
+
+    fireEvent.mouseDown(canvas.querySelector('circle')!)
+    const input = screen.getByPlaceholderText(baseProps.defaultCutoutDepth.toFixed(1))
+    fireEvent.change(input, { target: { value: '1' } })
+    fireEvent.blur(input)
+
+    const tool = onPlacedToolsChange.mock.calls.at(-1)![0][0] as PlacedTool
+    expect(tool.finger_holes[0].depth_override).toBe(5)
+    expect(screen.getByTestId('max-depth-hint').className).toContain('text-text-muted')
+  })
+
   it('keeps a depth within the cap unflagged', () => {
     const { canvas, onPlacedToolsChange } = renderEditor()
 

@@ -42,7 +42,9 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
       return
     }
     const next = Math.max(MIN_CUTOUT_DEPTH, Math.min(maxDepth, n))
-    setClamped(next !== n)
+    // only a value cut down to the cap is what the hint is about; raising a
+    // too-shallow value to the 5mm floor is not
+    setClamped(next < n)
     setText(String(next))
     onCommit(next)
   }
