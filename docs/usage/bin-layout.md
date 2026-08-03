@@ -24,6 +24,8 @@ When a tool is selected, a rotation handle appears. Drag it to rotate freely.
 
 Select a tool to see a **Depth** field in the toolbar. Leave it blank to use the bin's default cutout depth. Enter a value to override it for that tool only. Click the reset button to clear the override.
 
+The **max** value next to the field is the deepest pocket the current bin height allows -- anything deeper would break through the bin floor. Entering more clamps to that maximum and the hint turns amber. The same field and cap apply to a selected cutout.
+
 ## Text labels
 
 1. Click the **Text** tool in the floating toolbar.

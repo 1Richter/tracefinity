@@ -15,17 +15,23 @@ interface DepthInputProps {
   resetKey: string
 }
 
+// shallowest pocket the generator accepts, mirrors _resolve_pocket_depth
+const MIN_CUTOUT_DEPTH = 5
+
 function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: DepthInputProps) {
   const [text, setText] = useState<string>(value == null ? '' : String(value))
+  const [clamped, setClamped] = useState(false)
 
   // sync local text when the selected item changes (resetKey switches)
   useEffect(() => {
     setText(value == null ? '' : String(value))
+    setClamped(false)
   }, [resetKey, value])
 
   const commit = (raw: string) => {
     const trimmed = raw.trim()
     if (trimmed === '') {
+      setClamped(false)
       onCommit(null)
       return
     }
@@ -35,9 +41,10 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
       setText(value == null ? '' : String(value))
       return
     }
-    const clamped = Math.max(5, Math.min(maxDepth, n))
-    setText(String(clamped))
-    onCommit(clamped)
+    const next = Math.max(MIN_CUTOUT_DEPTH, Math.min(maxDepth, n))
+    setClamped(next !== n)
+    setText(String(next))
+    onCommit(next)
   }
 
   return (
@@ -46,6 +53,8 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
         type="number"
         value={text}
         placeholder={defaultDepth.toFixed(1)}
+        min={MIN_CUTOUT_DEPTH}
+        max={maxDepth}
         step={0.5}
         onChange={e => setText(e.target.value)}
         onBlur={e => commit(e.target.value)}
@@ -60,13 +69,20 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
       />
       {value != null && (
         <button
-          onClick={() => { setText(''); onCommit(null) }}
+          onClick={() => { setText(''); setClamped(false); onCommit(null) }}
           className="text-[10px] text-text-muted hover:text-text-secondary px-1"
           title="Reset to default"
         >
           ×
         </button>
       )}
+      <span
+        data-testid="max-depth-hint"
+        className={`text-[10px] whitespace-nowrap ${clamped ? 'text-amber-400' : 'text-text-muted'}`}
+        title={`Deeper cutouts would break through the bin floor at this bin height${clamped ? ' — value was clamped' : ''}`}
+      >
+        max {maxDepth.toFixed(1)}
+      </span>
     </>
   )
 }
