@@ -486,6 +486,11 @@ class PlacedTool(BaseModel):
     interior_rings: list[list[Point]] = []  # mm, bin-space
     rotation: float = 0.0  # degrees, applied on top of library points
     depth_override: float | None = None  # mm; None = use bin_config.cutout_depth
+    # cutouts edited in the bin editor. library holes listed here keep their
+    # bin-local geometry on sync; ids listed as removed stay out of this
+    # placement. holes added in the bin have ids the library does not know.
+    custom_hole_ids: list[str] = []
+    removed_hole_ids: list[str] = []
 
 
 class BinConfig(BinDefaults):

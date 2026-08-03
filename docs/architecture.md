@@ -91,6 +91,8 @@ tracefinity/
 
 PlacedTools sync with their library source on bin load (`GET /bins/{id}`) via `bin_service.sync_placed_tools()`. Edits to a tool's points, finger holes, or name propagate to all bins that use it. The position offset is preserved.
 
+Cutouts edited in the bin editor are per-placement: `PlacedTool.custom_hole_ids` lists library holes whose bin copy wins over the library version, `removed_hole_ids` lists library holes deleted from that placement, and holes with ids the library does not know were added in the bin. Sync keeps all three intact, so bin-local cutout work is never overwritten by a later library edit.
+
 Projects do not own tools or bins. Tools keep `project_ids`, bins keep `project_id`, and project health/repair endpoints keep those links consistent when records are renamed, deleted, or manually edited.
 
 When `TOOL_LABEL_PROVIDER=ollama`, `tool_namer.py` runs after contour extraction for both AI tracing and manual mask upload, before the session is persisted. It crops each still-generic polygon from the corrected source image, masks everything outside the contour to white, asks the selected `ToolNamer` for one short JSON tool name, validates it, and writes the result back to `Polygon.label`. Naming is optional and non-fatal; unsupported providers, missing images, or naming failures keep the generic `tool N` labels.

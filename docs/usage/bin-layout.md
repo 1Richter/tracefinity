@@ -24,6 +24,17 @@ When a tool is selected, a rotation handle appears. Drag it to rotate freely.
 
 Select a tool to see a **Depth** field in the toolbar. Leave it blank to use the bin's default cutout depth. Enter a value to override it for that tool only. Click the reset button to clear the override.
 
+## Editing cutouts in the bin
+
+Cutouts of a placed tool can be edited without leaving the bin, and the changes apply to that placement only -- the library tool and every other bin keep the original cutouts.
+
+- Pick a cutout shape in the floating toolbar (circle, cylinder, square, rectangle, filleted rectangle) and click a placed tool to add one. Escape returns to Select.
+- In Select mode, drag a cutout to move it. When it is selected, drag the round handle to resize, and the handle above it (rectangles and squares) to rotate.
+- **Depth** in the toolbar overrides the pocket depth for that cutout.
+- The trash button, or the Delete key, removes the selected cutout from this placement.
+
+Edits made here survive reloads: the bin remembers which cutouts were changed or removed, so later edits to the library tool no longer overwrite them. Untouched cutouts still follow the library tool.
+
 ## Text labels
 
 1. Click the **Text** tool in the floating toolbar.

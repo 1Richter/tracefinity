@@ -72,6 +72,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Text labels with emboss/recess options
 - Label editing (text, font size, emboss depth)
 - Per-tool cutout depth override
+- Cutouts editable per placement: add (circle, cylinder, square, rectangle, filleted rectangle), move, resize, rotate, delete -- without leaving the bin or changing the library tool
 - Auto-centre tools in expanded grids
 - Centre view (fit all to viewport)
 

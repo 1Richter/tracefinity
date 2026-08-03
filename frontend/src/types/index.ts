@@ -260,6 +260,10 @@ export interface PlacedTool {
   interior_rings: Point[][]
   rotation: number
   depth_override?: number | null
+  // cutouts edited in the bin editor: library holes kept as edited here, and
+  // library holes deleted from this placement (see bin_service.sync_placed_tools)
+  custom_hole_ids?: string[]
+  removed_hole_ids?: string[]
 }
 
 export interface BinData {
