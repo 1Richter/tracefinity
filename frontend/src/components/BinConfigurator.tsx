@@ -3,8 +3,8 @@
 import { Info } from 'lucide-react'
 import type { BinConfig } from '@/types'
 import { NumericInput } from '@/components/NumericInput'
-import { createPartialBinsValues, gridUnitsForSize, isCustomSize } from '@/lib/binDefaults'
-import { CUSTOM_SIZE_MAX_MM, CUSTOM_SIZE_MIN_MM, GRID_UNIT } from '@/lib/constants'
+import { binSizeMm, createPartialBinsValues, gridUnitsForSize, isCustomSize } from '@/lib/binDefaults'
+import { CUSTOM_SIZE_MAX_MM, CUSTOM_SIZE_MIN_MM } from '@/lib/constants'
 import { BED_SIZE_MAX_MM, BED_SIZE_MIN_MM } from '@/lib/settings'
 import { cn } from '@/lib/utils'
 import { ClassValue } from 'clsx'
@@ -170,8 +170,7 @@ export function BinConfigurator({ config, onChange, autoSize, onAutoSizeChange }
 
   const maxCutoutDepth = calcMaxCutoutDepth(config.height_units, config.stacking_lip)
   const customSize = isCustomSize(config)
-  const binWidth = config.grid_x * GRID_UNIT
-  const binDepth = config.grid_y * GRID_UNIT
+  const { width: binWidth, height: binDepth } = binSizeMm(config)
 
   function clampCustom(mm: number): number {
     return Math.min(CUSTOM_SIZE_MAX_MM, Math.max(CUSTOM_SIZE_MIN_MM, Math.round(mm)))
