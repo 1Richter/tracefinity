@@ -119,6 +119,15 @@ describe('ToolEditor cutout line', () => {
     expect(Number(stadium!.getAttribute('rx'))).toBeCloseTo(Number(stadium!.getAttribute('height')) / 2)
   })
 
+  it('draws a line shorter than its trench as the round pocket it becomes', () => {
+    const { container } = renderWithHoles([line({ width: 8, height: 20, radius: 10 })])
+
+    const stadium = [...container.querySelectorAll('rect')].find(r => r.getAttribute('rx'))!
+    // the generator clamps the length to the trench width, so both agree on a
+    // 20mm round pocket instead of an 8x20 pill
+    expect(Number(stadium.getAttribute('width'))).toBe(Number(stadium.getAttribute('height')))
+  })
+
   it('edits length, width and rotation numerically', () => {
     const { container, onFingerHolesChange } = renderWithHoles([line()])
 
