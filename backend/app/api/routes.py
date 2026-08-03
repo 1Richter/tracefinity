@@ -474,6 +474,8 @@ def _run_generate(
     threemf_path.unlink(missing_ok=True)
     for old in user_path.glob(f"outputs/{entity_id}_part*.stl"):
         old.unlink(missing_ok=True)
+    for old in user_path.glob(f"outputs/{entity_id}_part*.3mf"):
+        old.unlink(missing_ok=True)
     zip_path.unlink(missing_ok=True)
     insert_path.unlink(missing_ok=True)
 
@@ -487,7 +489,12 @@ def _run_generate(
     )
     if part_paths:
         stl_urls = [f"/storage/{user_id}/outputs/{Path(p).name}" for p in part_paths]
-        part_bytes = [(Path(p).name, Path(p).read_bytes()) for p in part_paths]
+        # split_bin/export_separated_parts also write a same-named .3mf next to
+        # each part's .stl (best-effort); bundle whichever landed so a split
+        # bin's 3MF download is the split pieces, not the pre-cut whole bin
+        part_3mf_paths = sorted(user_path.glob(f"outputs/{entity_id}_part*.3mf"))
+        part_paths_all = list(part_paths) + part_3mf_paths
+        part_bytes = [(Path(p).name, Path(p).read_bytes()) for p in part_paths_all]
         with zipfile.ZipFile(str(zip_path), 'w', zipfile.ZIP_DEFLATED) as zf:
             for fname, data in part_bytes:
                 zf.writestr(fname, data)

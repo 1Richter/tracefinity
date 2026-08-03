@@ -1604,6 +1604,7 @@ class ManifoldSTLGenerator:
             path = f"{output_dir}/{session_id}_part{i + 1}.stl"
             _export_stl(piece, path)
             paths.append(path)
+        self._export_pieces_3mf(pieces, output_dir, session_id)
 
         return paths
 
@@ -1625,6 +1626,7 @@ class ManifoldSTLGenerator:
             path = f"{output_dir}/{session_id}_part{i + 1}.stl"
             _export_stl(piece, path)
             paths.append(path)
+        self._export_pieces_3mf(pieces, output_dir, session_id)
         return paths
 
     def export_split_parts(
@@ -1644,6 +1646,21 @@ class ManifoldSTLGenerator:
         if bed_size > 0:
             return self.split_bin(bin_body, text_body, config, bed_size, output_dir, session_id)
         return []
+
+    @staticmethod
+    def _export_pieces_3mf(pieces: list, output_dir: str, session_id: str) -> None:
+        """Write a 3MF alongside each split STL, matching filenames by index.
+
+        Best-effort per piece: a broken 3MF (same soft-dependency failure mode
+        as the unsplit export) drops that piece's download rather than the
+        whole split -- the STL, which every piece already has, still prints.
+        """
+        for i, piece in enumerate(pieces):
+            path = f"{output_dir}/{session_id}_part{i + 1}.3mf"
+            try:
+                _export_3mf(piece, None, path)
+            except Exception:
+                logger.error("3MF export failed for part %d, skipping", i + 1, exc_info=True)
 
     @staticmethod
     def _split_along_axis(part, cut_points: list[float], axis: str) -> list:

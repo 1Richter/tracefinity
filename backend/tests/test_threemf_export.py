@@ -99,3 +99,72 @@ def test_embossed_labels_stay_a_separate_body(tmp_path: Path):
     # bin and text stay separate objects so a slicer can print them in two colours
     objects = root.findall(f"{MODEL_NS}resources/{MODEL_NS}object")
     assert len(objects) == 2
+
+
+def test_a_split_bin_gets_a_3mf_per_piece_not_one_for_the_whole_bin(tmp_path: Path):
+    """Before this, split_bin only wrote STLs -- the 3MF stayed the pre-cut
+    whole bin, too large for the bed it was just split to fit, and silently
+    the wrong download for anyone who picked 3MF over the STL parts zip."""
+    generator = ManifoldSTLGenerator()
+    config = GenerateRequest(
+        grid_x=10, grid_y=1, height_units=3, magnets=False, stacking_lip=False,
+        bed_size=150,
+    )
+    body, text_body = generator.generate_bin([], config, str(tmp_path / "bin.stl"))
+
+    stl_paths = generator.split_bin(body, text_body, config, config.bed_size, str(tmp_path), "part")
+
+    assert len(stl_paths) >= 2
+    threemf_paths = sorted(tmp_path.glob("part_part*.3mf"))
+    assert len(threemf_paths) == len(stl_paths)
+    for threemf in threemf_paths:
+        assert zipfile.is_zipfile(threemf)
+        assert _model_root(threemf).get("unit") == "millimeter"
+
+
+def test_a_split_bin_3mf_piece_is_a_single_body(tmp_path: Path):
+    """Each split STL is already the bin+text union (split_bin merges them
+    before cutting), so its 3MF sibling has nothing left to keep separate."""
+    generator = ManifoldSTLGenerator()
+    config = GenerateRequest(
+        grid_x=10, grid_y=1, height_units=3, magnets=False, stacking_lip=False,
+        bed_size=150,
+    )
+    body, text_body = generator.generate_bin([], config, str(tmp_path / "bin.stl"))
+    generator.split_bin(body, text_body, config, config.bed_size, str(tmp_path), "part")
+
+    threemf = sorted(tmp_path.glob("part_part*.3mf"))[0]
+    objects = _model_root(threemf).findall(f"{MODEL_NS}resources/{MODEL_NS}object")
+    assert len(objects) == 1
+
+
+def test_the_parts_zip_from_a_full_generate_holds_stl_and_3mf_per_piece(tmp_path: Path):
+    """End to end through _run_generate: the ZIP a user downloads for a split
+    bin has to carry the 3MF pieces, not just the whole-bin one at the top
+    level -- that top-level file is the pre-cut reference, per 'Full 3MF' in
+    the export menu, not a substitute for the split parts."""
+    from app.api import routes
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+
+    response = routes._run_generate(
+        [],
+        GenerateRequest(
+            grid_x=10, grid_y=1, height_units=3, magnets=False, stacking_lip=False,
+            bed_size=150,
+        ),
+        "bin",
+        tmp_path,
+        "hash-1",
+        "user",
+        _OpenStore(),
+    )
+
+    assert response.zip_url is not None
+    with zipfile.ZipFile(outputs / "bin_parts.zip") as zf:
+        names = zf.namelist()
+    stl_names = [n for n in names if n.endswith(".stl")]
+    threemf_names = [n for n in names if n.endswith(".3mf")]
+    assert len(stl_names) >= 2
+    assert len(threemf_names) == len(stl_names)
