@@ -36,12 +36,28 @@ Trace and mask-trace responses include the final visible `Polygon.label` values 
 - `PATCH /api/bin-projects/{id}` - update project metadata and status
 - `DELETE /api/bin-projects/{id}` - delete project metadata; tools and bins are retained
 - `POST /api/bin-projects/{id}/tools` - add tools to a project
+- `PATCH /api/bin-projects/{id}/tools/{tool_id}` - set how many copies of a tool the project needs (`{"quantity": 1-99}`)
 - `DELETE /api/bin-projects/{id}/tools/{tool_id}` - remove a tool from a project
 - `POST /api/bin-projects/{id}/bins` - link existing bins to a project
 - `DELETE /api/bin-projects/{id}/bins/{bin_id}` - detach a bin from a project
 - `POST /api/bin-projects/{id}/create-bin` - create a new bin from selected project tools, using project or request bin defaults
 - `GET /api/bin-projects/{id}/health` - report project/tool/bin link mismatches
 - `POST /api/bin-projects/{id}/repair` - repair safe project/tool/bin link mismatches
+
+### Tool quantities
+
+A project plans for N copies of a tool via `tool_quantities`, a `{tool_id: count}`
+map on the project. Quantity 1 is the default and is never stored, so projects
+written before quantities existed load unchanged.
+
+- Detail responses add `placed_counts` (`{tool_id: placements}` across the
+  project's linked bins). A tool is listed in `placed_tool_ids` only once every
+  planned copy sits in a bin.
+- Summary responses add `total_quantity` (copies across the project);
+  `placed_count` and `unplaced_count` count copies, not distinct tools.
+- `create-bin` without `tool_ids` expands each project tool to its quantity. An
+  explicit `tool_ids` list may repeat an id to place several copies. Repeated
+  ids are staggered by `DUPLICATE_OFFSET_MM` so the copies do not coincide.
 
 ## API Keys and tracer status
 - `GET /api-keys` - returns current provider and available tracers

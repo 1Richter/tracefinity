@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.constants import PaperSize
+from app.constants import MAX_TOOL_QUANTITY, PaperSize
 
 
 class Point(BaseModel):
@@ -351,6 +351,13 @@ ProjectHealthCode = Literal[
     "tool_extra_project_id",
 ]
 
+
+def validate_quantity(v: int) -> int:
+    if v < 1 or v > MAX_TOOL_QUANTITY:
+        raise ValueError(f"quantity must be between 1 and {MAX_TOOL_QUANTITY}")
+    return v
+
+
 class BinProject(BaseModel):
     id: str
     name: str
@@ -358,6 +365,9 @@ class BinProject(BaseModel):
     status: ProjectStatus = "active"
     tool_ids: list[str] = []
     bin_ids: list[str] = []
+    # how many copies of a tool the project plans for; a tool_id missing from
+    # the map means 1, so projects written before quantities load unchanged
+    tool_quantities: dict[str, int] = {}
     target_grid_x: float | None = None
     target_grid_y: float | None = None
     default_bin_config: BinDefaults | None = None
@@ -376,9 +386,21 @@ class BinProject(BaseModel):
             raise ValueError("grid size must be a multiple of 0.5")
         return v
 
+    @field_validator("tool_quantities")
+    @classmethod
+    def validate_tool_quantities(cls, v: dict[str, int]) -> dict[str, int]:
+        return {
+            tool_id: validate_quantity(quantity)
+            for tool_id, quantity in v.items()
+            if quantity != 1
+        }
+
+
 class BinProjectDetail(BinProject):
     placed_tool_ids: list[str] = []
     unplaced_tool_ids: list[str] = []
+    # placements found across the project's linked bins, per tool
+    placed_counts: dict[str, int] = {}
 
 
 class BinProjectSummary(BaseModel):
@@ -388,6 +410,7 @@ class BinProjectSummary(BaseModel):
     status: ProjectStatus = "active"
     tool_count: int = 0
     bin_count: int = 0
+    total_quantity: int = 0
     placed_count: int = 0
     unplaced_count: int = 0
     target_grid_x: float | None = None
@@ -445,6 +468,15 @@ class BinProjectUpdateRequest(BaseModel):
 
 class BinProjectToolsRequest(BaseModel):
     tool_ids: list[str]
+
+
+class BinProjectToolQuantityRequest(BaseModel):
+    quantity: int
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_tool_quantity(cls, v: int) -> int:
+        return validate_quantity(v)
 
 
 class BinProjectCreateBinRequest(BaseModel):

@@ -1,7 +1,10 @@
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import app.api.routes as routes
 from app.config import ensure_user_dirs, settings
+from app.constants import DUPLICATE_OFFSET_MM, MAX_TOOL_QUANTITY
 from app.main import app
 from app.models.schemas import (
     BinConfig,
@@ -10,13 +13,21 @@ from app.models.schemas import (
     BinProjectBinsRequest,
     BinProjectCreateBinRequest,
     BinProjectCreateRequest,
+    BinProjectToolQuantityRequest,
     BinProjectToolsRequest,
     BinProjectUpdateRequest,
     PlacedTool,
     Tool,
 )
 from app.services.bin_store import BinStore
-from app.services.project_service import project_health, project_status, repair_project_links
+from app.services.project_service import (
+    expand_tool_ids,
+    project_health,
+    project_status,
+    project_unit_counts,
+    repair_project_links,
+    tool_quantity,
+)
 from app.services.project_store import ProjectStore
 from app.services.tool_store import ToolStore
 
@@ -334,3 +345,210 @@ def test_project_health_reports_outside_bin_tools():
     issues = project_health(project, ToolStoreStub(), BinStoreStub())
 
     assert any(issue.code == "outside_tool" and not issue.repairable for issue in issues)
+
+
+# --- tool quantities ---
+
+
+def test_projects_written_before_quantities_default_to_one():
+    project = BinProject.model_validate({
+        "id": "project-1",
+        "name": "Top drawer",
+        "tool_ids": ["tool-1"],
+    })
+
+    assert project.tool_quantities == {}
+    assert tool_quantity(project, "tool-1") == 1
+    assert expand_tool_ids(project, ["tool-1"]) == ["tool-1"]
+
+
+def test_quantity_of_one_is_not_persisted():
+    project = BinProject.model_validate({
+        "id": "project-1",
+        "name": "Top drawer",
+        "tool_ids": ["tool-1", "tool-2"],
+        "tool_quantities": {"tool-1": 1, "tool-2": 3},
+    })
+
+    assert project.tool_quantities == {"tool-2": 3}
+    assert tool_quantity(project, "tool-1") == 1
+    assert tool_quantity(project, "tool-2") == 3
+
+
+def test_quantity_outside_the_allowed_range_is_rejected():
+    for quantity in (0, -1, MAX_TOOL_QUANTITY + 1):
+        with pytest.raises(ValidationError):
+            BinProject(id="project-1", name="Top drawer", tool_quantities={"tool-1": quantity})
+        with pytest.raises(ValidationError):
+            BinProjectToolQuantityRequest(quantity=quantity)
+
+
+def test_expand_tool_ids_repeats_each_tool_by_its_quantity():
+    project = BinProject(
+        id="project-1",
+        name="Top drawer",
+        tool_ids=["tool-1", "tool-2"],
+        tool_quantities={"tool-1": 3},
+    )
+
+    assert expand_tool_ids(project, project.tool_ids) == ["tool-1", "tool-1", "tool-1", "tool-2"]
+
+
+def test_project_status_needs_every_copy_placed():
+    project = BinProject(
+        id="project-1",
+        name="Top drawer",
+        tool_ids=["tool-1", "tool-2"],
+        tool_quantities={"tool-1": 3, "tool-2": 2},
+    )
+    linked_bins = [
+        BinModel(
+            id="bin-1",
+            placed_tools=[
+                PlacedTool(id="pt-1", tool_id="tool-1", name="Tool 1", points=[]),
+                PlacedTool(id="pt-2", tool_id="tool-1", name="Tool 1", points=[]),
+                PlacedTool(id="pt-3", tool_id="tool-2", name="Tool 2", points=[]),
+                PlacedTool(id="pt-4", tool_id="tool-2", name="Tool 2", points=[]),
+            ],
+        ),
+    ]
+
+    status = project_status(project, linked_bins)
+
+    # two of three copies placed still counts as unplaced; tool-2 is complete
+    assert status["placed_tool_ids"] == ["tool-2"]
+    assert status["unplaced_tool_ids"] == ["tool-1"]
+    assert status["placed_counts"] == {"tool-1": 2, "tool-2": 2}
+
+
+def test_summary_counts_copies_and_caps_overplacement():
+    project = BinProject(
+        id="project-1",
+        name="Top drawer",
+        tool_ids=["tool-1", "tool-2"],
+        tool_quantities={"tool-1": 3},
+    )
+    status = project_status(project, [
+        BinModel(
+            id="bin-1",
+            placed_tools=[
+                PlacedTool(id="pt-1", tool_id="tool-1", name="Tool 1", points=[]),
+                # tool-2 is planned once but placed twice
+                PlacedTool(id="pt-2", tool_id="tool-2", name="Tool 2", points=[]),
+                PlacedTool(id="pt-3", tool_id="tool-2", name="Tool 2", points=[]),
+            ],
+        ),
+    ])
+
+    total, placed, unplaced = project_unit_counts(project, status)
+
+    assert (total, placed, unplaced) == (4, 2, 2)
+
+
+def test_set_tool_quantity_endpoint_round_trips(tmp_path, monkeypatch):
+    client = _api_client(tmp_path, monkeypatch)
+    _seed_tool("tool-1")
+    project = client.post("/api/bin-projects", json={"name": "Top drawer", "tool_ids": ["tool-1"]}).json()
+
+    resp = client.patch(f"/api/bin-projects/{project['id']}/tools/tool-1", json={"quantity": 3})
+
+    assert resp.status_code == 200
+    assert resp.json()["tool_quantities"] == {"tool-1": 3}
+    assert client.get(f"/api/bin-projects/{project['id']}").json()["tool_quantities"] == {"tool-1": 3}
+
+    summary = client.get("/api/bin-projects").json()["projects"][0]
+    assert summary["tool_count"] == 1
+    assert summary["total_quantity"] == 3
+    assert summary["unplaced_count"] == 3
+
+
+def test_set_tool_quantity_back_to_one_clears_the_entry(tmp_path, monkeypatch):
+    client = _api_client(tmp_path, monkeypatch)
+    _seed_tool("tool-1")
+    project = client.post("/api/bin-projects", json={"name": "Top drawer", "tool_ids": ["tool-1"]}).json()
+    client.patch(f"/api/bin-projects/{project['id']}/tools/tool-1", json={"quantity": 4})
+
+    resp = client.patch(f"/api/bin-projects/{project['id']}/tools/tool-1", json={"quantity": 1})
+
+    assert resp.status_code == 200
+    assert resp.json()["tool_quantities"] == {}
+
+
+def test_set_tool_quantity_rejects_unknown_tool_and_bad_values(tmp_path, monkeypatch):
+    client = _api_client(tmp_path, monkeypatch)
+    _seed_tool("tool-1")
+    _seed_tool("tool-2")
+    project = client.post("/api/bin-projects", json={"name": "Top drawer", "tool_ids": ["tool-1"]}).json()
+
+    assert client.patch(f"/api/bin-projects/{project['id']}/tools/tool-2", json={"quantity": 2}).status_code == 404
+    assert client.patch(f"/api/bin-projects/{project['id']}/tools/tool-1", json={"quantity": 0}).status_code == 422
+    assert client.patch(
+        f"/api/bin-projects/{project['id']}/tools/tool-1",
+        json={"quantity": MAX_TOOL_QUANTITY + 1},
+    ).status_code == 422
+
+
+def test_removing_a_tool_drops_its_quantity(tmp_path, monkeypatch):
+    client = _api_client(tmp_path, monkeypatch)
+    _seed_tool("tool-1")
+    project = client.post("/api/bin-projects", json={"name": "Top drawer", "tool_ids": ["tool-1"]}).json()
+    client.patch(f"/api/bin-projects/{project['id']}/tools/tool-1", json={"quantity": 3})
+
+    resp = client.delete(f"/api/bin-projects/{project['id']}/tools/tool-1")
+
+    assert resp.status_code == 200
+    assert resp.json()["tool_quantities"] == {}
+
+
+def test_create_bin_without_tool_ids_places_every_planned_copy(tmp_path, monkeypatch):
+    client = _api_client(tmp_path, monkeypatch)
+    _seed_tool("tool-1")
+    _seed_tool("tool-2")
+    project = client.post(
+        "/api/bin-projects",
+        json={"name": "Top drawer", "tool_ids": ["tool-1", "tool-2"]},
+    ).json()
+    client.patch(f"/api/bin-projects/{project['id']}/tools/tool-1", json={"quantity": 3})
+
+    bin_data = client.post(f"/api/bin-projects/{project['id']}/create-bin", json={}).json()
+
+    assert [pt["tool_id"] for pt in bin_data["placed_tools"]] == ["tool-1", "tool-1", "tool-1", "tool-2"]
+    # every copy is an independent placement with its own id
+    assert len({pt["id"] for pt in bin_data["placed_tools"]}) == 4
+
+    detail = client.get(f"/api/bin-projects/{project['id']}").json()
+    assert detail["placed_tool_ids"] == ["tool-1", "tool-2"]
+    assert detail["placed_counts"] == {"tool-1": 3, "tool-2": 1}
+
+
+def test_create_bin_staggers_repeated_copies(tmp_path, monkeypatch):
+    client = _api_client(tmp_path, monkeypatch)
+    _seed_tool("tool-1")
+    project = client.post("/api/bin-projects", json={"name": "Top drawer", "tool_ids": ["tool-1"]}).json()
+
+    bin_data = client.post(
+        f"/api/bin-projects/{project['id']}/create-bin",
+        json={"tool_ids": ["tool-1", "tool-1"]},
+    ).json()
+
+    first, second = bin_data["placed_tools"]
+    assert second["points"][0]["x"] - first["points"][0]["x"] == DUPLICATE_OFFSET_MM
+    assert second["points"][0]["y"] - first["points"][0]["y"] == DUPLICATE_OFFSET_MM
+
+
+def test_repair_drops_quantities_for_tools_no_longer_in_the_project(tmp_path):
+    project_store = ProjectStore(tmp_path)
+    tool_store = ToolStore(tmp_path)
+    bin_store = BinStore(tmp_path)
+    tool_store.set("tool-1", _tool("tool-1", ["project-1"]))
+    project = BinProject(
+        id="project-1",
+        name="Top drawer",
+        tool_ids=["tool-1", "missing-tool"],
+        tool_quantities={"tool-1": 2, "missing-tool": 3},
+    )
+    project_store.set(project.id, project)
+
+    repaired = repair_project_links(project_store, project, tool_store, bin_store)
+
+    assert repaired.tool_quantities == {"tool-1": 2}

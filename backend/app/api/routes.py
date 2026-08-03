@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_user_id
 from app.config import ensure_user_dirs, settings
-from app.constants import GF_GRID
+from app.constants import DUPLICATE_OFFSET_MM, GF_GRID
 from app.models.schemas import (
     BinConfig,
     BinDefaults,
@@ -32,6 +32,7 @@ from app.models.schemas import (
     BinProjectCreateRequest,
     BinProjectDetail,
     BinProjectListResponse,
+    BinProjectToolQuantityRequest,
     BinProjectToolsRequest,
     BinProjectUpdateRequest,
     BinSummary,
@@ -75,6 +76,7 @@ from app.services.polygon_scaler import PolygonScaler, ScaledFingerHole, ScaledP
 from app.services.project_service import (
     add_bin_to_project,
     add_project_to_tools,
+    expand_tool_ids,
     health_response,
     make_project_detail,
     make_project_summary,
@@ -352,20 +354,28 @@ def _build_bin_from_tools(
 ) -> BinModel:
     placed: list[PlacedTool] = []
     all_points_mm: list[tuple[float, float]] = []
+    copies_placed: dict[str, int] = {}
 
     for tool_id in tool_ids:
         tool = user_tools.get(tool_id)
         if not tool:
             raise HTTPException(status_code=404, detail=f"tool {tool_id} not found")
 
-        all_points_mm.extend([(p.x, p.y) for p in tool.points])
+        # repeated tool ids are extra copies; stagger them so they do not
+        # land exactly on top of each other
+        copy_index = copies_placed.get(tool_id, 0)
+        copies_placed[tool_id] = copy_index + 1
+        offset = copy_index * DUPLICATE_OFFSET_MM
+
+        points = _translate_points(tool.points, offset, offset)
+        all_points_mm.extend([(p.x, p.y) for p in points])
         placed.append(PlacedTool(
             id=str(uuid.uuid4()),
             tool_id=tool_id,
             name=tool.name,
-            points=list(tool.points),
-            finger_holes=list(tool.finger_holes),
-            interior_rings=list(tool.interior_rings),
+            points=points,
+            finger_holes=_translate_finger_holes(tool.finger_holes, offset, offset),
+            interior_rings=[_translate_points(ring, offset, offset) for ring in tool.interior_rings],
         ))
 
     bc = BinConfig(**default_config.model_dump(exclude={"text_labels"}), text_labels=[]) if default_config else BinConfig()
@@ -1344,11 +1354,39 @@ async def remove_tool_from_bin_project(
 
     if tool_id in project.tool_ids:
         project.tool_ids = [tid for tid in project.tool_ids if tid != tool_id]
+        project.tool_quantities.pop(tool_id, None)
         project.updated_at = _now_iso()
         project_store.set(project_id, project)
 
     _, user_tools, user_bins = get_stores(user_id)
     remove_project_from_tools(project_id, [tool_id], user_tools)
+    return make_project_detail(project, user_bins)
+
+
+@router.patch("/bin-projects/{project_id}/tools/{tool_id}", response_model=BinProjectDetail)
+async def set_bin_project_tool_quantity(
+    request: Request,
+    project_id: str,
+    tool_id: str,
+    req: BinProjectToolQuantityRequest,
+    user_id: str = Depends(get_user_id),
+):
+    project_store = get_project_store(user_id)
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    if tool_id not in project.tool_ids:
+        raise HTTPException(status_code=404, detail=f"tool {tool_id} not in project")
+
+    # quantity 1 is the default, so it is stored as the absence of an entry
+    if req.quantity == 1:
+        project.tool_quantities.pop(tool_id, None)
+    else:
+        project.tool_quantities[tool_id] = req.quantity
+    project.updated_at = _now_iso()
+    project_store.set(project_id, project)
+
+    _, _, user_bins = get_stores(user_id)
     return make_project_detail(project, user_bins)
 
 
@@ -1458,7 +1496,9 @@ async def create_bin_from_project(
         raise HTTPException(status_code=404, detail="project not found")
 
     _, user_tools, user_bins = get_stores(user_id)
-    tool_ids = project.tool_ids if req.tool_ids is None else req.tool_ids
+    # an explicit list already carries its own repeats; the project-wide
+    # default expands each tool to the number of copies the project plans for
+    tool_ids = expand_tool_ids(project, project.tool_ids) if req.tool_ids is None else req.tool_ids
     outside_project = [tid for tid in tool_ids if tid not in project.tool_ids]
     if outside_project:
         raise HTTPException(status_code=400, detail="all tools must belong to project")

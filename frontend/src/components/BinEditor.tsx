@@ -3,7 +3,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { PlacedTool, TextLabel } from '@/types'
 import { snapToGrid as snapToGridUtil } from '@/lib/svg'
-import { GRID_UNIT, DISPLAY_SCALE, SNAP_GRID } from '@/lib/constants'
+import { GRID_UNIT, DISPLAY_SCALE, SNAP_GRID, DUPLICATE_OFFSET } from '@/lib/constants'
+import { duplicatePlacedTool } from '@/lib/placedTools'
 import { BinEditorToolbar } from '@/components/BinEditorToolbar'
 import { BinEditorCanvas } from '@/components/BinEditorCanvas'
 
@@ -73,6 +74,7 @@ export function BinEditor({
   const [pendingText, setPendingText] = useState('')
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
+  const [clipboardTool, setClipboardTool] = useState<PlacedTool | null>(null)
   const pendingInputRef = useRef<HTMLInputElement>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
   const rafRef = useRef<number | null>(null)
@@ -409,6 +411,57 @@ export function BinEditor({
     setSelection(null)
   }
 
+  const placeCopy = useCallback((source: PlacedTool) => {
+    const copy = duplicatePlacedTool(source, DUPLICATE_OFFSET)
+    onChangeRef.current([...toolsRef.current, copy])
+    setSelection({ type: 'tool', toolId: copy.id })
+    return copy
+  }, [])
+
+  const selectedPlacedTool = useCallback(() => (
+    selection?.type === 'tool'
+      ? toolsRef.current.find(t => t.id === selection.toolId) ?? null
+      : null
+  ), [selection])
+
+  const handleCopyTool = useCallback(() => {
+    const tool = selectedPlacedTool()
+    if (tool) setClipboardTool(tool)
+  }, [selectedPlacedTool])
+
+  const handlePasteTool = useCallback(() => {
+    if (!clipboardTool) return
+    // paste again from the copy so repeated pastes cascade instead of stacking
+    setClipboardTool(placeCopy(clipboardTool))
+  }, [clipboardTool, placeCopy])
+
+  const handleDuplicateTool = useCallback(() => {
+    const tool = selectedPlacedTool()
+    if (tool) placeCopy(tool)
+  }, [selectedPlacedTool, placeCopy])
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+
+      const key = e.key.toLowerCase()
+      if (key === 'c' && selection?.type === 'tool') {
+        e.preventDefault()
+        handleCopyTool()
+      } else if (key === 'v' && clipboardTool) {
+        e.preventDefault()
+        handlePasteTool()
+      } else if (key === 'd' && selection?.type === 'tool') {
+        e.preventDefault()
+        handleDuplicateTool()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selection, clipboardTool, handleCopyTool, handlePasteTool, handleDuplicateTool])
+
   const commitPendingLabel = useCallback(() => {
     if (!pendingLabel || !pendingText.trim()) {
       setPendingLabel(null)
@@ -526,6 +579,7 @@ export function BinEditor({
           selectedHole={selectedHole ?? null}
           selectedHoleToolId={selection?.type === 'hole' ? selection.toolId : null}
           onEditTool={onEditTool}
+          onDuplicateTool={handleDuplicateTool}
           onRemoveTool={handleDeleteTool}
           onRemoveLabel={handleDeleteLabel}
           smoothedToolIds={smoothedToolIds}

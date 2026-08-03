@@ -20,6 +20,10 @@ Snap is off by default (5mm grid when enabled). Toggle it with the **Snap** butt
 
 When a tool is selected, a rotation handle appears. Drag it to rotate freely.
 
+## Duplicating tools
+
+With a tool selected, press Ctrl/Cmd+C then Ctrl/Cmd+V, press Ctrl/Cmd+D, or click the copy button in the toolbar. The copy is an independent placement offset 5mm from the original -- moving, rotating or re-cutting it leaves the original alone. Pasting repeatedly cascades the copies instead of stacking them in one spot.
+
 ## Per-tool cutout depth
 
 Select a tool to see a **Depth** field in the toolbar. Leave it blank to use the bin's default cutout depth. Enter a value to override it for that tool only. Click the reset button to clear the override.

@@ -208,8 +208,12 @@ export interface BinProject {
   status: ProjectStatus
   tool_ids: string[]
   bin_ids: string[]
+  // planned copies per tool; a tool missing from the map means 1
+  tool_quantities: Record<string, number>
   placed_tool_ids: string[]
   unplaced_tool_ids: string[]
+  // placements found across the project's linked bins, per tool
+  placed_counts: Record<string, number>
   target_grid_x: number | null
   target_grid_y: number | null
   default_bin_config: BinDefaults | null
@@ -225,6 +229,7 @@ export interface BinProjectSummary {
   status: ProjectStatus
   tool_count: number
   bin_count: number
+  total_quantity: number
   placed_count: number
   unplaced_count: number
   target_grid_x: number | null
