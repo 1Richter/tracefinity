@@ -31,6 +31,15 @@ MAGNET_SPACING = 26mm (centre-to-centre, 4 per cell)
 
 Bin dimensions accept 0.5-unit increments (e.g. 3.5x2.5 = 147x105mm). Half-unit trailing cells use 21mm base units. `half_grid_base` generates all base cells at 21mm for finer baseplate positioning. Magnets are placed only on full 42mm cells.
 
+## Custom mm sizes
+
+`size_mode` on `BinParams` selects how the footprint is defined:
+
+- `units` (default): `grid_x` / `grid_y` in gridfinity units, 1-10 in 0.5 steps. Outer size is `grid * 42 - 0.5mm`, keeping the gridfinity clearance so neighbouring bins share a baseplate.
+- `custom`: `custom_width_mm` / `custom_depth_mm` (42-1000mm) give the **exact** outer size -- no 0.5mm deduction, because these bins fill a drawer or shelf rather than tile a baseplate. `grid_x` / `grid_y` are derived as `mm / 42` and are no longer restricted to 1-10 or half steps; everything downstream (base cells, magnets, partial-bin mask, splitting, label cells) keeps working in those fractional units.
+
+`_outer_dims(config)` is the single place that resolves the footprint. Base feet, magnets and the partial-bin mask stay on the 42mm cell grid; the trailing partial cell in each direction absorbs the remainder, and a remainder thinner than `MIN_BASE_CELL_MM` (14mm) is folded into the cell before it, because a narrower base unit's tapered profile inverts. Auto-size is disabled for custom bins -- the size is user-declared.
+
 ## Partial bins
 
 Optional per-cell shell trimming controlled by `partial_bins`, `partial_bins_values`, `partial_bins_connect`, and `partial_bins_retain_wall` on `BinParams` / `GenerateRequest`. The shell is always built for the full grid first; partial-bin logic runs after lip features and before pocket/magnet/text cutters.

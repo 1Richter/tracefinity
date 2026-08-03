@@ -33,6 +33,10 @@ LIP_D2 = 0.7
 LIP_D3 = 1.2
 LIP_D4 = LIP_D0 + LIP_D2  # 2.6
 
+# narrowest base unit whose bottom taper still has a valid rounded profile:
+# 2*GF_CORNER_R + 2*BASE_H_TOP + 2*BASE_H_BOT, rounded up
+MIN_BASE_CELL_MM = 14.0
+
 MAGNET_DIAMETER = 6.0
 MAGNET_DEPTH = 2.4
 MAGNET_INSET = 4.8     # from cell corner to magnet centre
@@ -167,14 +171,31 @@ def _base_cell_layout(grid_units: float, cell_size: float) -> list[tuple[float, 
     """
     total = grid_units * GF_GRID
     n_cells = math.ceil(total / cell_size - 1e-9)
+    widths = [min(cell_size, total - i * cell_size) for i in range(n_cells)]
+    # a custom mm size leaves an arbitrary remainder at the far end; a base unit
+    # thinner than MIN_BASE_CELL_MM degenerates (its tapered profile inverts),
+    # so the sliver is folded into the cell before it instead
+    if len(widths) > 1 and widths[-1] < MIN_BASE_CELL_MM:
+        sliver = widths.pop()
+        widths[-1] += sliver
     cells: list[tuple[float, float]] = []
-    for i in range(n_cells):
-        w = min(cell_size, total - i * cell_size)
-        if w < 1.0:
-            break
-        cx = i * cell_size + w / 2.0 - total / 2.0
-        cells.append((cx, w))
+    pos = -total / 2.0
+    for w in widths:
+        cells.append((pos + w / 2.0, w))
+        pos += w
     return cells
+
+
+def _outer_dims(config) -> tuple[float, float]:
+    """Outer footprint of the bin in mm.
+
+    Unit-sized bins keep the 0.5mm gridfinity clearance so neighbouring bins
+    share a baseplate. Custom mm bins are built to exactly the requested outer
+    size -- they are meant to fill a drawer or shelf, not tile a baseplate.
+    """
+    if getattr(config, "size_mode", "units") == "custom":
+        return float(config.custom_width_mm), float(config.custom_depth_mm)
+    return config.grid_x * GF_GRID - 0.5, config.grid_y * GF_GRID - 0.5
 
 
 def _cell_center(ix: int, iy: int, grid_x: int, grid_y: int) -> tuple[float, float]:
@@ -269,8 +290,7 @@ def _build_shell(config: GenerateRequest):
 
     grid_x, grid_y = config.grid_x, config.grid_y
     height = config.height_units * GF_HEIGHT_UNIT
-    outer_w = grid_x * GF_GRID - 0.5
-    outer_h = grid_y * GF_GRID - 0.5
+    outer_w, outer_h = _outer_dims(config)
     r = GF_CORNER_R
 
     half_grid = getattr(config, "half_grid_base", False)
@@ -372,8 +392,9 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
     cutters = []
     cut_height = top_z - GF_BASE_HEIGHT + 0.2
     retain_wall = _partial_bins_retain_wall(config)
-    bin_hw = (config.grid_x * GF_GRID - 0.5) / 2.0
-    bin_hh = (config.grid_y * GF_GRID - 0.5) / 2.0
+    outer_w, outer_h = _outer_dims(config)
+    bin_hw = outer_w / 2.0
+    bin_hh = outer_h / 2.0
     half = GF_GRID / 2.0
     preserve = PARTIAL_BIN_RETAIN_WALL_PRESERVE_MM
     grid_x, grid_y = _grid_cell_counts(config)
@@ -419,8 +440,7 @@ def _make_connect_mode_stability_plates(config: GenerateRequest):
 
     plates = []
     overlap = GF_GRID / 2.0
-    outer_w = config.grid_x * GF_GRID - 0.5
-    outer_h = config.grid_y * GF_GRID - 0.5
+    outer_w, outer_h = _outer_dims(config)
     bin_hw = outer_w / 2.0
     bin_hh = outer_h / 2.0
     grid_x, grid_y = _grid_cell_counts(config)
@@ -789,8 +809,7 @@ def _interior_clip_rect(config):
     """
     from shapely.geometry import Polygon as _SPoly
 
-    outer_w = config.grid_x * GF_GRID - 0.5
-    outer_h = config.grid_y * GF_GRID - 0.5
+    outer_w, outer_h = _outer_dims(config)
     lip_inset = (LIP_D0 + LIP_D2) if getattr(config, "stacking_lip", False) else 0.0
     inset = max(config.wall_thickness, lip_inset)
     hw = outer_w / 2 - inset
@@ -1340,8 +1359,7 @@ class ManifoldSTLGenerator:
         offset_x = -bin_width / 2
         offset_y = -bin_depth / 2
         wall_top_z = config.height_units * GF_HEIGHT_UNIT
-        outer_w = config.grid_x * GF_GRID - 0.5
-        outer_h = config.grid_y * GF_GRID - 0.5
+        outer_w, outer_h = _outer_dims(config)
         connect_bases = _partial_bins_connect_bases(config)
         partial_shell = _uses_partial_shell(config)
 
@@ -1539,8 +1557,10 @@ class ManifoldSTLGenerator:
         if bed_size <= 0 or total_mm <= bed_size:
             return []
         import math as _m
-        # work in half-units for split granularity
-        half_units = int(grid_count * 2)
+        # work in half-units for split granularity; a custom mm size rarely
+        # lands on a half-unit, so round up -- otherwise the trailing remainder
+        # is unaccounted for and the last piece can overflow the bed
+        half_units = max(1, _m.ceil(grid_count * 2 - 1e-9))
         max_halves = max(1, int(bed_size // GF_HALF_GRID))
         num_pieces = _m.ceil(half_units / max_halves)
         base = half_units // num_pieces

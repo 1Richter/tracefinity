@@ -3,7 +3,8 @@
 import { Info } from 'lucide-react'
 import type { BinConfig } from '@/types'
 import { NumericInput } from '@/components/NumericInput'
-import { createPartialBinsValues } from '@/lib/binDefaults'
+import { createPartialBinsValues, gridUnitsForSize, isCustomSize } from '@/lib/binDefaults'
+import { CUSTOM_SIZE_MAX_MM, CUSTOM_SIZE_MIN_MM, GRID_UNIT } from '@/lib/constants'
 import { BED_SIZE_MAX_MM, BED_SIZE_MIN_MM } from '@/lib/settings'
 import { cn } from '@/lib/utils'
 import { ClassValue } from 'clsx'
@@ -168,8 +169,56 @@ export function BinConfigurator({ config, onChange, autoSize, onAutoSizeChange }
   }
 
   const maxCutoutDepth = calcMaxCutoutDepth(config.height_units, config.stacking_lip)
-  const binWidth = config.grid_x * 42
-  const binDepth = config.grid_y * 42
+  const customSize = isCustomSize(config)
+  const binWidth = config.grid_x * GRID_UNIT
+  const binDepth = config.grid_y * GRID_UNIT
+
+  function clampCustom(mm: number): number {
+    return Math.min(CUSTOM_SIZE_MAX_MM, Math.max(CUSTOM_SIZE_MIN_MM, Math.round(mm)))
+  }
+
+  // the mm size is authoritative in custom mode; grid_x/grid_y stay derived
+  // from it, exactly as the backend re-derives them on save
+  function updateCustomSize(widthMm: number, depthMm: number) {
+    const gridX = gridUnitsForSize(widthMm)
+    const gridY = gridUnitsForSize(depthMm)
+    update({
+      custom_width_mm: widthMm,
+      custom_depth_mm: depthMm,
+      grid_x: gridX,
+      grid_y: gridY,
+      partial_bins_values: createPartialBinsValues(gridX, gridY),
+    })
+  }
+
+  function toggleCustomSize(enabled: boolean) {
+    if (enabled) {
+      // auto-size would fight a user-declared shelf size
+      onAutoSizeChange?.(false)
+      const width = clampCustom(binWidth)
+      const depth = clampCustom(binDepth)
+      update({
+        size_mode: 'custom',
+        custom_width_mm: width,
+        custom_depth_mm: depth,
+        grid_x: gridUnitsForSize(width),
+        grid_y: gridUnitsForSize(depth),
+        partial_bins_values: createPartialBinsValues(gridUnitsForSize(width), gridUnitsForSize(depth)),
+      })
+      return
+    }
+    const snapUnits = (units: number) => Math.min(10, Math.max(1, Math.round(units * 2) / 2))
+    const gridX = snapUnits(config.grid_x)
+    const gridY = snapUnits(config.grid_y)
+    update({
+      size_mode: 'units',
+      custom_width_mm: null,
+      custom_depth_mm: null,
+      grid_x: gridX,
+      grid_y: gridY,
+      partial_bins_values: createPartialBinsValues(gridX, gridY),
+    })
+  }
   const needsSplit = config.bed_size > 0 && (binWidth > config.bed_size || binDepth > config.bed_size)
   const exportsSeparateParts = config.partial_bins && !config.partial_bins_connect && config.partial_bins_values.some((enabled) => !enabled);
 
@@ -179,44 +228,85 @@ export function BinConfigurator({ config, onChange, autoSize, onAutoSizeChange }
         <Toggle
           label="Auto-size grid"
           help="Automatically fit grid to placed tools. Turn off to set grid size manually."
-          checked={!!autoSize}
+          checked={!!autoSize && !customSize}
           onChange={onAutoSizeChange}
+          disabled={customSize}
         />
       )}
 
-      <SliderRow
-        label="Grid Width"
-        help="Bin width in gridfinity units (42mm each). Half-unit increments (21mm) supported."
-        value={config.grid_x}
-        min={1}
-        max={10}
-        step={0.5}
-        unit="u"
-        onChange={(v) =>
-          update({
-              grid_x: v,
-              partial_bins_values: createPartialBinsValues(v, config.grid_y),
-          })
-        }
-        disabled={autoSize}
+      <Toggle
+        label="Custom size (mm)"
+        help="Size the bin to exact outer millimetres so it fills a drawer or shelf, instead of whole 42mm gridfinity units. Base feet and magnets stay on the 42mm grid."
+        checked={customSize}
+        onChange={toggleCustomSize}
       />
 
-      <SliderRow
-        label="Grid Depth"
-        help="Bin depth in gridfinity units (42mm each). Half-unit increments (21mm) supported."
-        value={config.grid_y}
-        min={1}
-        max={10}
-        step={0.5}
-        unit="u"
-        onChange={(v) =>
-          update({
-              grid_y: v,
-              partial_bins_values: createPartialBinsValues(config.grid_x, v),
-          })
-        }
-        disabled={autoSize}
-      />
+      {customSize ? (
+        <>
+          <SliderRow
+            label="Width"
+            help={`Exact outer width of the bin in mm (${CUSTOM_SIZE_MIN_MM}-${CUSTOM_SIZE_MAX_MM}mm).`}
+            value={config.custom_width_mm ?? binWidth}
+            min={CUSTOM_SIZE_MIN_MM}
+            max={CUSTOM_SIZE_MAX_MM}
+            step={1}
+            unit="mm"
+            onChange={(v) => updateCustomSize(v, config.custom_depth_mm ?? binDepth)}
+          />
+
+          <SliderRow
+            label="Depth"
+            help={`Exact outer depth of the bin in mm (${CUSTOM_SIZE_MIN_MM}-${CUSTOM_SIZE_MAX_MM}mm).`}
+            value={config.custom_depth_mm ?? binDepth}
+            min={CUSTOM_SIZE_MIN_MM}
+            max={CUSTOM_SIZE_MAX_MM}
+            step={1}
+            unit="mm"
+            onChange={(v) => updateCustomSize(config.custom_width_mm ?? binWidth, v)}
+          />
+
+          <p className="text-[11px] text-text-muted leading-tight pl-0.5">
+            {config.grid_x.toFixed(2)} × {config.grid_y.toFixed(2)} gridfinity units — the last
+            base cell in each direction absorbs the remainder
+          </p>
+        </>
+      ) : (
+        <>
+          <SliderRow
+            label="Grid Width"
+            help="Bin width in gridfinity units (42mm each). Half-unit increments (21mm) supported."
+            value={config.grid_x}
+            min={1}
+            max={10}
+            step={0.5}
+            unit="u"
+            onChange={(v) =>
+              update({
+                  grid_x: v,
+                  partial_bins_values: createPartialBinsValues(v, config.grid_y),
+              })
+            }
+            disabled={autoSize}
+          />
+
+          <SliderRow
+            label="Grid Depth"
+            help="Bin depth in gridfinity units (42mm each). Half-unit increments (21mm) supported."
+            value={config.grid_y}
+            min={1}
+            max={10}
+            step={0.5}
+            unit="u"
+            onChange={(v) =>
+              update({
+                  grid_y: v,
+                  partial_bins_values: createPartialBinsValues(config.grid_x, v),
+              })
+            }
+            disabled={autoSize}
+          />
+        </>
+      )}
 
       <SliderRow
         label="Height"

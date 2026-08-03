@@ -12,7 +12,7 @@ import { Trash2, Package, Plus, Loader2, Grid3X3, Folder } from 'lucide-react'
 import { Alert } from '@/components/Alert'
 import { PhotoIllustration, CornersIllustration, TraceIllustration, OrganiseIllustration } from '@/components/OnboardingIllustrations'
 import { GRID_UNIT } from '@/lib/constants'
-import { getDefaultBinDefaults } from '@/lib/binDefaults'
+import { formatBinSize, getDefaultBinDefaults } from '@/lib/binDefaults'
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation'
 import { projectNameMap, projectStatusLabels, toolProjectLabel, toolProjectTitle } from '@/lib/projectSelectors'
 import { cn } from '@/lib/utils'
@@ -720,7 +720,7 @@ export default function HomePage() {
                         )}
                         <span className="text-[10px] text-text-muted flex items-center gap-0.5 flex-shrink-0">
                           <Grid3X3 className="w-2.5 h-2.5" />
-                          {bin.grid_x}x{bin.grid_y}
+                          {formatBinSize(bin)}
                         </span>
                         {bin.tool_count > 0 && (
                           <span className="text-[10px] text-text-muted flex-shrink-0">

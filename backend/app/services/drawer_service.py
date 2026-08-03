@@ -202,6 +202,12 @@ def _rotate_bin_90(bm: BinModel) -> None:
     old_h = bm.bin_config.grid_y * GF_GRID
 
     bm.bin_config.grid_x, bm.bin_config.grid_y = bm.bin_config.grid_y, bm.bin_config.grid_x
+    # custom mm sizes are the source of truth for grid_x/grid_y, so they have
+    # to swap too or the next validation pass undoes the rotation
+    bm.bin_config.custom_width_mm, bm.bin_config.custom_depth_mm = (
+        bm.bin_config.custom_depth_mm,
+        bm.bin_config.custom_width_mm,
+    )
 
     for pt in bm.placed_tools:
         pt.points = [Point(x=old_h - p.y, y=p.x) for p in pt.points]

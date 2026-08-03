@@ -2,11 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   binDefaultsFromConfig,
   buildBinConfig,
+  formatBinSize,
   getDefaultBinConfig,
   getDefaultBinDefaults,
+  isCustomSize,
   resetDefaultBinConfig,
   saveDefaultBinConfig,
 } from './binDefaults'
+import type { BinSummary } from '@/types'
 
 const SETTINGS_KEY = 'tracefinity-settings'
 
@@ -114,6 +117,60 @@ describe('bin defaults', () => {
     expect(reset.magnet_diameter).toBe(6)
     expect(stored.bedSize).toBe(256)
     expect(stored.binDefaults).toBeUndefined()
+  })
+
+  it('defaults to unit sizing', () => {
+    const config = buildBinConfig()
+
+    expect(config.size_mode).toBe('units')
+    expect(config.custom_width_mm).toBeNull()
+    expect(isCustomSize(config)).toBe(false)
+  })
+
+  it('derives the grid from a custom mm size', () => {
+    const config = buildBinConfig({
+      size_mode: 'custom',
+      custom_width_mm: 480,
+      custom_depth_mm: 300,
+      grid_x: 2,
+      grid_y: 2,
+    })
+
+    expect(config.grid_x).toBeCloseTo(480 / 42)
+    expect(config.grid_y).toBeCloseTo(300 / 42)
+    // 12 columns x 8 rows of 42mm cells cover the custom size
+    expect(config.partial_bins_values).toHaveLength(96)
+  })
+
+  it('falls back to unit sizing when a custom size is incomplete', () => {
+    const config = buildBinConfig({ size_mode: 'custom', custom_width_mm: 480 })
+
+    expect(config.size_mode).toBe('units')
+    expect(config.grid_x).toBe(2)
+  })
+
+  it('formats bin sizes for cards', () => {
+    const summary = (overrides: Partial<BinSummary>): BinSummary => ({
+      id: 'bin-1',
+      name: null,
+      project_id: null,
+      created_at: null,
+      tool_ids: [],
+      tool_count: 0,
+      has_stl: false,
+      grid_x: 2,
+      grid_y: 3,
+      size_mode: 'units',
+      custom_width_mm: null,
+      custom_depth_mm: null,
+      preview_tools: [],
+      ...overrides,
+    })
+
+    expect(formatBinSize(summary({}))).toBe('2x3')
+    expect(
+      formatBinSize(summary({ size_mode: 'custom', custom_width_mm: 480, custom_depth_mm: 300.25 }))
+    ).toBe('480 × 300.3 mm')
   })
 
   it('does not throw when localStorage writes are unavailable', () => {

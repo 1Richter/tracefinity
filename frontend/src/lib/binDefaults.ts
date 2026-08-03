@@ -1,13 +1,36 @@
-import type { BinConfig, BinDefaults } from '@/types'
+import type { BinConfig, BinDefaults, BinSummary } from '@/types'
+import { GRID_UNIT } from './constants'
 import { getSettings, saveSettings } from './settings'
 
 export function createPartialBinsValues(gridX: number, gridY: number): boolean[] {
   return Array(Math.ceil(gridX) * Math.ceil(gridY)).fill(true);
 }
 
+/** grid units covered by a custom mm size -- mirrors the backend's resolve_size_mode */
+export function gridUnitsForSize(mm: number): number {
+  return mm / GRID_UNIT
+}
+
+/** whether a config is sized in mm and has both dimensions */
+export function isCustomSize(config: Pick<BinDefaults, 'size_mode' | 'custom_width_mm' | 'custom_depth_mm'>): boolean {
+  return config.size_mode === 'custom' && config.custom_width_mm != null && config.custom_depth_mm != null
+}
+
+/** human-readable bin size: "480 × 300 mm" for custom bins, "3x2" for unit bins */
+export function formatBinSize(bin: Pick<BinSummary, 'size_mode' | 'grid_x' | 'grid_y' | 'custom_width_mm' | 'custom_depth_mm'>): string {
+  if (isCustomSize(bin)) {
+    const round = (v: number) => Math.round(v * 10) / 10
+    return `${round(bin.custom_width_mm!)} × ${round(bin.custom_depth_mm!)} mm`
+  }
+  return `${bin.grid_x}x${bin.grid_y}`
+}
+
 export const FACTORY_BIN_CONFIG: BinConfig = {
   grid_x: 2,
   grid_y: 2,
+  size_mode: 'units',
+  custom_width_mm: null,
+  custom_depth_mm: null,
   height_units: 4,
   magnets: true,
   magnet_diameter: 6.0,
@@ -37,6 +60,15 @@ export function buildBinConfig(overrides: Partial<BinDefaults> | null = null): B
       ...(overrides || {}),
       text_labels: [] as BinConfig["text_labels"],
   };
+  if (isCustomSize(merged)) {
+      // the mm size is the source of truth; keep the derived grid in sync so
+      // canvas, preview and partial-bin cells all agree with the backend
+      merged.grid_x = gridUnitsForSize(merged.custom_width_mm!);
+      merged.grid_y = gridUnitsForSize(merged.custom_depth_mm!);
+  } else if (merged.size_mode === 'custom') {
+      // incomplete custom size, fall back to unit sizing
+      merged.size_mode = 'units';
+  }
   const expectedLength = Math.ceil(merged.grid_x) * Math.ceil(merged.grid_y);
   if (!merged.partial_bins_values || merged.partial_bins_values.length !== expectedLength) {
       merged.partial_bins_values = createPartialBinsValues(merged.grid_x, merged.grid_y);
