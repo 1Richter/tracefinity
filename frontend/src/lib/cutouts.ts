@@ -10,10 +10,26 @@ const CUTOUT_SHAPE_LABELS: Record<CutoutShape, string> = {
   square: 'square',
   rectangle: 'rectangle',
   filleted_rectangle: 'filleted rectangle',
+  line: 'cutout line',
 }
+
+// default size in mm of a cutout line: long enough to span a row of tools
+export const CUTOUT_LINE_LENGTH_MM = 60
+export const CUTOUT_LINE_WIDTH_MM = 8
 
 export function isRectangularCutout(shape?: CutoutShape): boolean {
   return shape === 'rectangle' || shape === 'filleted_rectangle'
+}
+
+// a straight trench with half-round ends, sized like a rectangle: width is the
+// length along its axis, height the trench width
+export function isLineCutout(shape?: CutoutShape): boolean {
+  return shape === 'line'
+}
+
+/** shapes measured by width x height instead of a radius */
+export function usesWidthHeight(shape?: CutoutShape): boolean {
+  return isRectangularCutout(shape) || isLineCutout(shape)
 }
 
 export function isFilletedRectangleCutout(shape?: CutoutShape): boolean {

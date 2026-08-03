@@ -7,7 +7,7 @@ import type { FingerHole } from '@/types'
 import { SNAP_GRID_MIN, SNAP_GRID_MAX } from '@/lib/constants'
 import { NumericInput } from '@/components/NumericInput'
 
-export type EditMode = 'select' | 'add-vertex' | 'delete-vertex' | 'finger-hole' | 'circle' | 'cylinder' | 'square' | 'rectangle' | 'filleted_rectangle' | 'fill-ring'
+export type EditMode = 'select' | 'add-vertex' | 'delete-vertex' | 'finger-hole' | 'circle' | 'cylinder' | 'square' | 'rectangle' | 'filleted_rectangle' | 'line' | 'fill-ring'
 
 export type Selection =
   | { type: 'vertex'; pointIdx: number }
@@ -129,6 +129,7 @@ export function ToolEditorToolbar({
                     { mode: 'square' as EditMode, icon: <Square className="w-4 h-4" />, label: 'Square', size: '20mm' },
                     { mode: 'rectangle' as EditMode, icon: <RectangleHorizontal className="w-4 h-4" />, label: 'Rectangle', size: '30x20mm' },
                     { mode: 'filleted_rectangle' as EditMode, icon: <RectangleHorizontal className="w-4 h-4" />, label: 'Filleted rectangle', size: '30x20mm' },
+                    { mode: 'line' as EditMode, icon: <Minus className="w-4 h-4" />, label: 'Cutout line', size: '60x8mm' },
                   ]).map(item => (
                     <button
                       key={item.mode}

@@ -622,6 +622,67 @@ def _make_filleted_rectangle_cutter(
     )
 
 
+def _line_cutter_parts(length: float, trench: float) -> tuple[float, float]:
+    """Straight body length and end-cap radius of a cutout line.
+
+    The line is a stadium: a rectangle of (length - trench) capped by two
+    half-circles of trench/2, so the overall footprint is length x trench.
+    A line shorter than it is wide degenerates to a single round pocket.
+    """
+    t = max(trench, 0.01)
+    total = max(length, t)
+    return max(total - t, 0.0), t / 2.0
+
+
+def _make_line_cutter(
+    length: float,
+    trench: float,
+    pocket_depth: float,
+    wall_top_z: float,
+    rotation: float,
+    x: float,
+    y: float,
+):
+    """Flat-bottomed trench with rounded ends, cut down from the floor face."""
+    import manifold3d as mf
+
+    body_len, r = _line_cutter_parts(length, trench)
+    height = pocket_depth + 0.01
+    parts = [
+        mf.Manifold.cylinder(height, r, circular_segments=ROUND_SEGS).translate(
+            (sign * body_len / 2.0, 0.0, 0.0)
+        )
+        for sign in (-1.0, 1.0)
+    ]
+    if body_len > 1e-6:
+        parts.append(
+            mf.Manifold.cube((body_len, r * 2, height), center=True).translate(
+                (0.0, 0.0, height / 2.0)
+            )
+        )
+    cutter = mf.Manifold.batch_boolean(parts, mf.OpType.Add)
+    return (
+        cutter
+        .rotate((0.0, 0.0, rotation))
+        .translate((x, y, wall_top_z - pocket_depth - 0.005))
+    )
+
+
+def _line_cross_section(length: float, trench: float, rotation: float):
+    """2D stadium footprint of a cutout line, used for its chamfer cutter."""
+    import manifold3d as mf
+
+    body_len, r = _line_cutter_parts(length, trench)
+    cs = mf.CrossSection.circle(r, circular_segments=ROUND_SEGS).translate(
+        (-body_len / 2.0, 0.0)
+    ) + mf.CrossSection.circle(r, circular_segments=ROUND_SEGS).translate(
+        (body_len / 2.0, 0.0)
+    )
+    if body_len > 1e-6:
+        cs = cs + mf.CrossSection.square((body_len, r * 2), center=True)
+    return cs.rotate(rotation) if rotation else cs
+
+
 def _make_magnet_holes(config: GenerateRequest):
     """Batch union of all magnet hole cylinders (4 per cell, or corners only).
 
@@ -1020,6 +1081,12 @@ def _make_finger_holes(
                     cutter = _make_filleted_rectangle_cutter(
                         w, h, pocket_depth, wall_top_z, rotation, fh_x, fh_y
                     )
+                elif shape == 'line':
+                    length = fh.width_mm if fh.width_mm else fh.radius_mm * 2
+                    trench = fh.height_mm if fh.height_mm else fh.radius_mm
+                    cutter = _make_line_cutter(
+                        length, trench, pocket_depth, wall_top_z, rotation, fh_x, fh_y
+                    )
                 else:
                     continue
                 cutters.append(cutter)
@@ -1075,6 +1142,11 @@ def _make_finger_hole_chamfers(
                     cs = mf.CrossSection.square((w, h), center=True)
                     if rotation:
                         cs = cs.rotate(rotation)
+                    cs_outer = cs.offset(eff_chamfer, mf.JoinType.Round)
+                elif shape == 'line':
+                    length = fh.width_mm if fh.width_mm else fh.radius_mm * 2
+                    trench = fh.height_mm if fh.height_mm else fh.radius_mm
+                    cs = _line_cross_section(length, trench, rotation)
                     cs_outer = cs.offset(eff_chamfer, mf.JoinType.Round)
                 else:
                     continue

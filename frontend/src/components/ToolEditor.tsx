@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
-import { Plus, Circle, Disc, Square, RectangleHorizontal, Fingerprint, ImageIcon, Eye, EyeOff } from 'lucide-react'
+import { Plus, Circle, Disc, Square, RectangleHorizontal, Fingerprint, Minus, ImageIcon, Eye, EyeOff } from 'lucide-react'
 import type { Point, FingerHole, ToolImageContext, AffineMatrix } from '@/types'
 import { simplifyPolygon, smoothEpsilon, simplifyEpsilon, snapToGrid as snapToGridUtil } from '@/lib/svg'
 import { rotateAround, flipAround } from '@/lib/affine'
@@ -12,8 +12,9 @@ import {
   type SymmetryAxis, type KeepSide,
 } from '@/lib/symmetry'
 import { DISPLAY_SCALE, SNAP_GRID, ZOOM_FACTOR } from '@/lib/constants'
-import { cutoutShapeLabel, isRectangularCutout, resizeRectCutout, resizeRoundCutout } from '@/lib/cutouts'
+import { CUTOUT_LINE_LENGTH_MM, CUTOUT_LINE_WIDTH_MM, MIN_CUTOUT_SIZE_MM, cutoutShapeLabel, isLineCutout, resizeRectCutout, resizeRoundCutout, usesWidthHeight } from '@/lib/cutouts'
 import { useHistory } from '@/hooks/useHistory'
+import { NumericInput } from '@/components/NumericInput'
 import { ToolEditorToolbar } from '@/components/ToolEditorToolbar'
 import { ToolEditorCanvas } from '@/components/ToolEditorCanvas'
 import type { EditMode, Selection } from '@/components/ToolEditorToolbar'
@@ -175,7 +176,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
       maxY = Math.max(maxY, p.y)
     }
     for (const fh of fingerHoles) {
-      const r = isRectangularCutout(fh.shape) ? Math.max(fh.width || 0, fh.height || 0) / 2 : fh.radius
+      const r = usesWidthHeight(fh.shape) ? Math.max(fh.width || 0, fh.height || 0) / 2 : fh.radius
       minX = Math.min(minX, fh.x - r)
       minY = Math.min(minY, fh.y - r)
       maxX = Math.max(maxX, fh.x + r)
@@ -464,6 +465,13 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
       case 'square': return { ...base, radius: 10, shape: 'square' as const }
       case 'rectangle': return { ...base, radius: 15, width: 30, height: 20, shape: 'rectangle' as const }
       case 'filleted_rectangle': return { ...base, radius: 15, width: 30, height: 20, shape: 'filleted_rectangle' as const }
+      case 'line': return {
+        ...base,
+        radius: CUTOUT_LINE_LENGTH_MM / 2,
+        width: CUTOUT_LINE_LENGTH_MM,
+        height: CUTOUT_LINE_WIDTH_MM,
+        shape: 'line' as const,
+      }
       default: return null
     }
   }
@@ -546,7 +554,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
     const pos = screenToMm(e.clientX, e.clientY)
     // for rectangle corners, pin the opposite corner in world coords
     let anchorX: number | undefined, anchorY: number | undefined
-    if (cornerIndex !== undefined && isRectangularCutout(hole.shape) && hole.width && hole.height) {
+    if (cornerIndex !== undefined && usesWidthHeight(hole.shape) && hole.width && hole.height) {
       const rot = (hole.rotation || 0) * Math.PI / 180
       const cosR = Math.cos(rot), sinR = Math.sin(rot)
       const hw = hole.width / 2, hh = hole.height / 2
@@ -583,7 +591,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
       didPanRef.current = false
       return
     }
-    if (editMode === 'finger-hole' || editMode === 'circle' || editMode === 'cylinder' || editMode === 'square' || editMode === 'rectangle' || editMode === 'filleted_rectangle') {
+    if (editMode === 'finger-hole' || editMode === 'circle' || editMode === 'cylinder' || editMode === 'square' || editMode === 'rectangle' || editMode === 'filleted_rectangle' || editMode === 'line') {
       const pos = screenToMm(e.clientX, e.clientY)
       commitCutout(snapToGrid(pos.x), snapToGrid(pos.y))
       return
@@ -653,7 +661,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
       let resized: FingerHole | null = null
       let updated = currentHoles.map(fh => {
         if (fh.id !== dragging.holeId) return fh
-        if (isRectangularCutout(fh.shape) && dragging.anchorX !== undefined && dragging.anchorY !== undefined) {
+        if (usesWidthHeight(fh.shape) && dragging.anchorX !== undefined && dragging.anchorY !== undefined) {
           const r = resizeRectCutout(dragging.anchorX, dragging.anchorY, pos.x, pos.y, dragging.rotation || 0)
           resized = { ...fh, x: snap(r.x), y: snap(r.y), width: r.width, height: r.height, radius: Math.max(r.width, r.height) / 2 }
           return resized
@@ -778,6 +786,18 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
     ? displayHoles.find(fh => fh.id === selection.holeId)
     : null
 
+  // numeric editing for the parametric shapes; radius stays the hit-test size
+  const updateSelectedHole = (updates: Partial<FingerHole>) => {
+    if (selection?.type !== 'hole') return
+    const updated = fingerHoles.map(fh => {
+      if (fh.id !== selection.holeId) return fh
+      const next = { ...fh, ...updates }
+      return { ...next, radius: Math.max(next.width ?? 0, next.height ?? 0, 0) / 2 || next.radius }
+    })
+    pushHistory({ points, fingerHoles: updated, interiorRings: currentRings })
+    onFingerHolesChange(updated)
+  }
+
   const handleFillRing = useCallback((ringIndex: number) => {
     if (!onInteriorRingsChange) return
     const updated = currentRings.filter((_, i) => i !== ringIndex)
@@ -785,7 +805,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
     onInteriorRingsChange(updated)
   }, [currentRings, points, fingerHoles, pushHistory, onInteriorRingsChange])
 
-  const isCutoutMode = editMode === 'finger-hole' || editMode === 'circle' || editMode === 'cylinder' || editMode === 'square' || editMode === 'rectangle' || editMode === 'filleted_rectangle'
+  const isCutoutMode = editMode === 'finger-hole' || editMode === 'circle' || editMode === 'cylinder' || editMode === 'square' || editMode === 'rectangle' || editMode === 'filleted_rectangle' || editMode === 'line'
 
   const cutoutModeIcon = editMode === 'finger-hole' ? <Fingerprint className="w-4.5 h-4.5" />
     : editMode === 'circle' ? <Circle className="w-4.5 h-4.5" />
@@ -793,6 +813,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
     : editMode === 'square' ? <Square className="w-4.5 h-4.5" />
     : editMode === 'rectangle' ? <RectangleHorizontal className="w-4.5 h-4.5" />
     : editMode === 'filleted_rectangle' ? <RectangleHorizontal className="w-4.5 h-4.5" />
+    : editMode === 'line' ? <Minus className="w-4.5 h-4.5" />
     : <Plus className="w-4.5 h-4.5" />
 
   const cutoutModeLabel = editMode === 'finger-hole' ? 'Finger hole'
@@ -801,6 +822,7 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
     : editMode === 'square' ? 'Square'
     : editMode === 'rectangle' ? 'Rectangle'
     : editMode === 'filleted_rectangle' ? 'Filleted'
+    : editMode === 'line' ? 'Line'
     : 'Cutout'
 
   return (
@@ -906,14 +928,36 @@ export function ToolEditor({ points, fingerHoles, interiorRings, smoothed, smoot
           <div className="font-medium text-text-primary text-[12px] mb-1">Selection</div>
           <div>
             {cutoutShapeLabel(selectedHole.shape)}
-            {isRectangularCutout(selectedHole.shape) && selectedHole.width && selectedHole.height
+            {usesWidthHeight(selectedHole.shape) && selectedHole.width && selectedHole.height
               ? ` ${selectedHole.width.toFixed(0)}x${selectedHole.height.toFixed(0)}mm`
               : selectedHole.shape === 'square'
               ? ` ${(selectedHole.radius * 2).toFixed(0)}mm`
               : ` r=${selectedHole.radius.toFixed(1)}mm`
             }
           </div>
-          {selectedHole.rotation ? <div>rotation: {selectedHole.rotation.toFixed(0)}deg</div> : null}
+          {isLineCutout(selectedHole.shape) ? (
+            <div className="mt-1.5 space-y-1">
+              {([
+                { key: 'width' as const, label: 'Length', value: selectedHole.width ?? CUTOUT_LINE_LENGTH_MM, min: MIN_CUTOUT_SIZE_MM, max: 500, step: 1 },
+                { key: 'height' as const, label: 'Width', value: selectedHole.height ?? CUTOUT_LINE_WIDTH_MM, min: MIN_CUTOUT_SIZE_MM, max: 100, step: 0.5 },
+                { key: 'rotation' as const, label: 'Rotation', value: selectedHole.rotation ?? 0, min: -180, max: 180, step: 1 },
+              ]).map(field => (
+                <div key={field.key} className="flex items-center justify-between gap-2">
+                  <span>{field.label}</span>
+                  <NumericInput
+                    value={Math.round(field.value * 10) / 10}
+                    onChange={(v: number) => updateSelectedHole({ [field.key]: v })}
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    className="w-14 px-1 py-0.5 bg-elevated border border-border-subtle rounded-[6px] text-text-primary text-[11px] text-center outline-none focus:border-accent"
+                  />
+                </div>
+              ))}
+            </div>
+          ) : selectedHole.rotation ? (
+            <div>rotation: {selectedHole.rotation.toFixed(0)}deg</div>
+          ) : null}
         </div>
       )}
 

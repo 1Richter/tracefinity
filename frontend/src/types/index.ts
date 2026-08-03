@@ -12,12 +12,13 @@ export interface FingerHole {
   radius: number
   rotation?: number
   shape?: CutoutShape
+  // for rectangles; length along the axis and trench width for lines
   width?: number
   height?: number
   depth_override?: number | null
 }
 
-export type CutoutShape = 'circle' | 'cylinder' | 'square' | 'rectangle' | 'filleted_rectangle'
+export type CutoutShape = 'circle' | 'cylinder' | 'square' | 'rectangle' | 'filleted_rectangle' | 'line'
 
 export interface Polygon {
   id: string
