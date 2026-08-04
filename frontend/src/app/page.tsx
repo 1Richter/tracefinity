@@ -14,7 +14,7 @@ import { PhotoIllustration, CornersIllustration, TraceIllustration, OrganiseIllu
 import { GRID_UNIT } from '@/lib/constants'
 import { formatBinSize, getDefaultBinDefaults } from '@/lib/binDefaults'
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation'
-import { projectNameMap, projectStatusLabels, toolProjectLabel, toolProjectTitle } from '@/lib/projectSelectors'
+import { binProjectLabel, isProjectOwnedBin, projectNameMap, projectStatusLabels, toolProjectLabel, toolProjectTitle } from '@/lib/projectSelectors'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/useTheme'
 
@@ -233,6 +233,17 @@ function loadSectionCollapseState(): MainSectionCollapseState {
   }
 }
 
+const SHOW_PROJECT_BINS_KEY = 'tracefinity.home.showProjectBins'
+
+function loadShowProjectBins(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(SHOW_PROJECT_BINS_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 function HintBanner({ children }: { children: React.ReactNode }) {
   const { theme } = useTheme()
   return (
@@ -259,6 +270,7 @@ export default function HomePage() {
   const [toolSearch, setToolSearch] = useState('')
   const [toolSort, setToolSort] = useState('date')
   const [collapsedSections, setCollapsedSections] = useState<MainSectionCollapseState>(loadSectionCollapseState)
+  const [showProjectBins, setShowProjectBins] = useState<boolean>(loadShowProjectBins)
 
   const hasData = toolsList.length > 0 || binsList.length > 0 || projectsList.length > 0
 
@@ -312,6 +324,28 @@ export default function HomePage() {
     }
     return list
   }, [toolsList, toolSearch, toolSort])
+
+  // bins that belong to a project are already listed on the project page, so
+  // the dashboard hides them unless the user asks for the full list
+  const projectBinCount = useMemo(
+    () => binsList.filter(isProjectOwnedBin).length,
+    [binsList],
+  )
+
+  const visibleBins = useMemo(
+    () => (showProjectBins ? binsList : binsList.filter(bin => !isProjectOwnedBin(bin))),
+    [binsList, showProjectBins],
+  )
+
+  function toggleShowProjectBins() {
+    const next = !showProjectBins
+    setShowProjectBins(next)
+    try {
+      window.localStorage.setItem(SHOW_PROJECT_BINS_KEY, String(next))
+    } catch {
+      // localStorage can be unavailable in private browsing or restricted contexts.
+    }
+  }
 
   function setSectionCollapsed(section: MainSectionId, collapsed: boolean) {
     setCollapsedSections(prev => {
@@ -661,10 +695,23 @@ export default function HomePage() {
         <div>
           <SectionHeader
             title="Bins"
-            count={binsList.length}
+            count={visibleBins.length}
             collapsed={collapsedSections.bins}
             onToggleCollapsed={() => setSectionCollapsed('bins', !collapsedSections.bins)}
           >
+            {projectBinCount > 0 && (
+              <button
+                onClick={toggleShowProjectBins}
+                aria-pressed={showProjectBins}
+                className="glass-sm rounded-[7px] px-2.5 py-1 text-[11px] text-text-secondary flex items-center gap-1.5 hover:bg-glass-hover transition-colors cursor-pointer"
+                title={showProjectBins
+                  ? 'Hide bins that belong to a project'
+                  : 'Show bins that belong to a project'}
+              >
+                <Folder className="w-3 h-3" />
+                {showProjectBins ? 'Hide project bins' : `Show project bins (${projectBinCount})`}
+              </button>
+            )}
             <button
               onClick={() => setNameModal({})}
               className="glass-sm rounded-[7px] px-2.5 py-1 text-[11px] text-text-secondary flex items-center gap-1.5 hover:bg-glass-hover transition-colors cursor-pointer"
@@ -674,9 +721,11 @@ export default function HomePage() {
             </button>
           </SectionHeader>
           {!collapsedSections.bins && (
-            binsList.length > 0 ? (
+            visibleBins.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {binsList.map(bin => (
+                {visibleBins.map(bin => {
+                  const projectLabel = binProjectLabel(bin, projectNameById)
+                  return (
                   <div
                     key={bin.id}
                     onClick={() => router.push(`/bins/${bin.id}`)}
@@ -687,6 +736,19 @@ export default function HomePage() {
                         <BinPreview gridX={bin.grid_x} gridY={bin.grid_y} tools={bin.preview_tools} />
                       ) : (
                         <Package className="w-6 h-6 text-text-muted/20" />
+                      )}
+                      {projectLabel && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            router.push(`/projects/${bin.project_id}`)
+                          }}
+                          className="absolute top-2 left-2 max-w-[calc(100%-3.5rem)] glass-sm rounded-full px-2 py-0.5 text-[10px] text-text-secondary hover:text-accent transition-colors flex items-center gap-1 cursor-pointer"
+                          title={`Belongs to project ${projectLabel}`}
+                        >
+                          <Folder className="w-2.5 h-2.5 flex-shrink-0" />
+                          <span className="truncate">{projectLabel}</span>
+                        </button>
                       )}
                       <div className="absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                         <button
@@ -703,21 +765,6 @@ export default function HomePage() {
                       </p>
                       <div className="flex min-w-0 items-center gap-1.5 mt-0.5 overflow-hidden whitespace-nowrap">
                         <span className="text-[10px] text-text-muted flex-shrink-0">{formatDate(bin.created_at)}</span>
-                        {bin.project_id && projectNameById.get(bin.project_id) && (
-                          <>
-                            <span className="text-[10px] text-text-muted flex-shrink-0">·</span>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                if (bin.project_id) router.push(`/projects/${bin.project_id}`)
-                              }}
-                              className="min-w-0 text-[10px] text-text-secondary hover:text-accent transition-colors truncate cursor-pointer"
-                              title={projectNameById.get(bin.project_id)}
-                            >
-                              {projectNameById.get(bin.project_id)}
-                            </button>
-                          </>
-                        )}
                         <span className="text-[10px] text-text-muted flex items-center gap-0.5 flex-shrink-0">
                           <Grid3X3 className="w-2.5 h-2.5" />
                           {formatBinSize(bin)}
@@ -730,18 +777,35 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div className="glass rounded-[8px] p-8 text-center">
                 <Package className="w-6 h-6 text-text-muted/20 mx-auto mb-2" />
-                <p className="text-xs text-text-muted mb-3">No bins yet</p>
-                <button
-                  onClick={() => setNameModal({})}
-                  className="btn-primary px-4 py-1.5 text-xs"
-                >
-                  Create your first bin
-                </button>
+                {projectBinCount > 0 ? (
+                  <>
+                    <p className="text-xs text-text-muted mb-3">
+                      Every bin belongs to a project
+                    </p>
+                    <button
+                      onClick={toggleShowProjectBins}
+                      className="btn-primary px-4 py-1.5 text-xs"
+                    >
+                      Show project bins ({projectBinCount})
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-text-muted mb-3">No bins yet</p>
+                    <button
+                      onClick={() => setNameModal({})}
+                      className="btn-primary px-4 py-1.5 text-xs"
+                    >
+                      Create your first bin
+                    </button>
+                  </>
+                )}
               </div>
             )
           )}
