@@ -1,12 +1,13 @@
 'use client'
 
 import { RefObject } from 'react'
-import type { PlacedTool, TextLabel } from '@/types'
+import type { CutoutShape, PlacedTool, TextLabel } from '@/types'
 import { polygonPathData, smoothPathData, simplifyPolygon, smoothEpsilon } from '@/lib/svg'
+import { isRectangularCutout } from '@/lib/cutouts'
 import { GRID_UNIT, DISPLAY_SCALE } from '@/lib/constants'
 import { CutoutOverlay } from '@/components/CutoutOverlay'
 
-type Tool = 'select' | 'text'
+type Tool = 'select' | 'text' | CutoutShape
 
 type Selection =
   | { type: 'tool'; toolId: string }
@@ -50,7 +51,9 @@ interface Props {
   handleLabelMouseDown: (labelId: string) => (e: React.MouseEvent) => void
   handleLabelRotateMouseDown: (labelId: string) => (e: React.MouseEvent) => void
   handleLabelDoubleClick: (labelId: string) => (e: React.MouseEvent) => void
-  onHoleClick: (toolId: string, holeId: string, e: React.MouseEvent) => void
+  onHoleMouseDown: (toolId: string, holeId: string, e: React.MouseEvent) => void
+  onHoleResizeMouseDown: (toolId: string, holeId: string, cornerIndex?: number) => (e: React.MouseEvent) => void
+  onHoleRotateMouseDown: (toolId: string, holeId: string) => (e: React.MouseEvent) => void
   handleBackgroundClick: (e: React.MouseEvent) => void
   stopClick: (e: React.MouseEvent) => void
   stopClickUnlessText: (e: React.MouseEvent) => void
@@ -95,7 +98,9 @@ export function BinEditorCanvas({
   handleLabelMouseDown,
   handleLabelRotateMouseDown,
   handleLabelDoubleClick,
-  onHoleClick,
+  onHoleMouseDown,
+  onHoleResizeMouseDown,
+  onHoleRotateMouseDown,
   handleBackgroundClick,
   stopClick,
   stopClickUnlessText,
@@ -216,10 +221,11 @@ export function BinEditorCanvas({
 
                 <CutoutOverlay
                   holes={tool.finger_holes}
-                  interactive={activeTool === 'select'}
+                  interactive={activeTool !== 'text'}
+                  editMode={activeTool}
                   selectedId={selection?.type === 'hole' && selection.toolId === tool.id ? selection.holeId : undefined}
                   defaultCutoutDepth={tool.depth_override ?? defaultCutoutDepth}
-                  onMouseDown={(holeId, e) => onHoleClick(tool.id, holeId, e)}
+                  onMouseDown={(holeId, e) => onHoleMouseDown(tool.id, holeId, e)}
                 />
               </g>
             )
@@ -316,6 +322,83 @@ export function BinEditorCanvas({
                     </g>
                   )
                 })}
+              </g>
+            )
+          })()}
+
+          {/* selection handles: cutout (resize corners + rotation) */}
+          {selection?.type === 'hole' && (() => {
+            const tool = placedTools.find(t => t.id === selection.toolId)
+            const fh = tool?.finger_holes.find(h => h.id === selection.holeId)
+            if (!tool || !fh) return null
+            const x = fh.x * DISPLAY_SCALE
+            const y = fh.y * DISPLAY_SCALE
+            const r = fh.radius * DISPLAY_SCALE
+            const shape = fh.shape || 'circle'
+            const rotation = fh.rotation || 0
+            const rectangular = isRectangularCutout(shape)
+            const w = rectangular && fh.width ? fh.width * DISPLAY_SCALE : r * 2
+            const h = rectangular && fh.height ? fh.height * DISPLAY_SCALE : r * 2
+            const grabR = handleR * 0.45
+            const rotR = handleR * 0.6
+            const gap = handleR
+
+            const rotateHandle = (cy: number, edge: number) => (
+              <>
+                <line
+                  x1={0} y1={edge} x2={0} y2={cy + rotR}
+                  stroke="rgba(90, 180, 222, 0.6)" strokeWidth={handleStroke}
+                  strokeDasharray={`${handleR * 0.3},${handleR * 0.25}`}
+                  className="pointer-events-none"
+                />
+                <circle
+                  cx={0} cy={cy} r={rotR}
+                  fill="rgb(90, 180, 222)" stroke="white" strokeWidth={handleStroke}
+                  className="cursor-rotate"
+                  aria-label="Rotate cutout"
+                  onMouseDown={onHoleRotateMouseDown(tool.id, fh.id)}
+                  onClick={stopClick}
+                />
+              </>
+            )
+
+            if (rectangular) {
+              const hw = w / 2, hh = h / 2
+              const corners = [
+                { x: -hw, y: -hh },
+                { x: hw, y: -hh },
+                { x: hw, y: hh },
+                { x: -hw, y: hh },
+              ]
+              return (
+                <g transform={`translate(${x},${y})${rotation !== 0 ? ` rotate(${rotation})` : ''}`}>
+                  {corners.map((c, i) => (
+                    <circle
+                      key={i}
+                      cx={c.x} cy={c.y} r={grabR}
+                      fill="#1e293b" stroke="rgb(90, 180, 222)" strokeWidth={handleStroke}
+                      className="cursor-nwse-resize"
+                      aria-label="Resize cutout"
+                      onMouseDown={onHoleResizeMouseDown(tool.id, fh.id, i)}
+                      onClick={stopClick}
+                    />
+                  ))}
+                  {rotateHandle(-hh - gap - rotR, -hh)}
+                </g>
+              )
+            }
+
+            return (
+              <g transform={`translate(${x},${y})${rotation !== 0 ? ` rotate(${rotation})` : ''}`}>
+                <circle
+                  cx={r} cy={0} r={grabR}
+                  fill="rgb(90, 180, 222)" stroke="white" strokeWidth={handleStroke}
+                  className="cursor-ew-resize"
+                  aria-label="Resize cutout"
+                  onMouseDown={onHoleResizeMouseDown(tool.id, fh.id)}
+                  onClick={stopClick}
+                />
+                {shape === 'square' && rotateHandle(-r - gap - rotR, -r)}
               </g>
             )
           })()}

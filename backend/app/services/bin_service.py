@@ -30,20 +30,33 @@ def sync_placed_tools(bin_data, user_tools) -> bool:
             ry = (p.x - lib_cx) * sin_r + (p.y - lib_cy) * cos_r
             new_points.append(Point(x=placed_cx + rx, y=placed_cy + ry))
 
-        # preserve per-placement state (depth_override, etc.) by matching
-        # source-tool holes to existing placed holes by id. without this,
-        # GET /bins/{id} silently overwrites stored overrides on every load.
-        existing_overrides = {fh.id: fh.depth_override for fh in pt.finger_holes}
+        # preserve per-placement state by matching source-tool holes to existing
+        # placed holes by id. without this, GET /bins/{id} silently overwrites
+        # stored overrides on every load.
+        placed_holes = {fh.id: fh for fh in pt.finger_holes}
+        library_ids = {fh.id for fh in tool.finger_holes}
+        custom_ids = set(pt.custom_hole_ids)
+        removed_ids = set(pt.removed_hole_ids)
         new_fh = []
         for fh in tool.finger_holes:
+            if fh.id in removed_ids:
+                continue
+            existing = placed_holes.get(fh.id)
+            # a hole moved/resized/rotated in the bin editor is authoritative
+            # for this placement and must not snap back to the library version
+            if existing is not None and fh.id in custom_ids:
+                new_fh.append(existing)
+                continue
             rx = (fh.x - lib_cx) * cos_r - (fh.y - lib_cy) * sin_r
             ry = (fh.x - lib_cx) * sin_r + (fh.y - lib_cy) * cos_r
             new_fh.append(FingerHole(
                 id=fh.id, x=placed_cx + rx, y=placed_cy + ry,
                 radius=fh.radius, width=fh.width, height=fh.height,
                 rotation=fh.rotation, shape=fh.shape,
-                depth_override=existing_overrides.get(fh.id),
+                depth_override=existing.depth_override if existing else None,
             ))
+        # cutouts added in the bin editor have no library counterpart
+        new_fh.extend(fh for fh in pt.finger_holes if fh.id not in library_ids)
 
         new_rings = []
         for ring in (tool.interior_rings or []):

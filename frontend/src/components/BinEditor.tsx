@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import type { PlacedTool, TextLabel } from '@/types'
+import type { CutoutShape, FingerHole, PlacedTool, TextLabel } from '@/types'
 import { snapToGrid as snapToGridUtil } from '@/lib/svg'
+import { isRectangularCutout, resizeRectCutout, resizeRoundCutout } from '@/lib/cutouts'
 import { GRID_UNIT, DISPLAY_SCALE, SNAP_GRID, DUPLICATE_OFFSET } from '@/lib/constants'
 import { duplicatePlacedTool } from '@/lib/placedTools'
-import { BinEditorToolbar } from '@/components/BinEditorToolbar'
+import { BinEditorToolbar, isCutoutTool } from '@/components/BinEditorToolbar'
 import { BinEditorCanvas } from '@/components/BinEditorCanvas'
 
 interface Props {
@@ -29,7 +30,7 @@ interface Props {
   onDraggingChange?: (dragging: boolean) => void
 }
 
-type Tool = 'select' | 'text'
+type Tool = 'select' | 'text' | CutoutShape
 
 type Selection =
   | { type: 'tool'; toolId: string }
@@ -42,7 +43,46 @@ type DragState =
   | { type: 'rotate'; toolId: string; centerX: number; centerY: number; startAngle: number; origRotation: number; origPoints: { x: number; y: number }[]; origHoles: { id: string; x: number; y: number }[]; origInteriorRings: { x: number; y: number }[][] }
   | { type: 'label'; labelId: string; startX: number; startY: number; origX: number; origY: number }
   | { type: 'rotate-label'; labelId: string; centerX: number; centerY: number; startAngle: number; origRotation: number }
+  | { type: 'hole'; toolId: string; holeId: string; startX: number; startY: number; origX: number; origY: number }
+  | { type: 'hole-resize'; toolId: string; holeId: string; centerX: number; centerY: number; anchorX?: number; anchorY?: number; rotation?: number }
+  | { type: 'hole-rotate'; toolId: string; holeId: string; centerX: number; centerY: number; startAngle: number; origRotation: number }
   | null
+
+// default size in mm of a cutout added in the bin editor, per shape
+function createCutout(shape: CutoutShape, x: number, y: number): FingerHole {
+  const base = { id: `bfh-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, x, y, rotation: 0 }
+  switch (shape) {
+    case 'rectangle':
+    case 'filleted_rectangle':
+      return { ...base, radius: 15, width: 30, height: 20, shape }
+    default:
+      return { ...base, radius: 10, shape }
+  }
+}
+
+// a cutout edited in the bin becomes authoritative for this placement, so its
+// id is recorded and sync_placed_tools stops overwriting it from the library
+function withHoleEdit(
+  tool: PlacedTool,
+  holeId: string,
+  patch: (hole: FingerHole) => FingerHole,
+): PlacedTool {
+  const customIds = tool.custom_hole_ids ?? []
+  return {
+    ...tool,
+    finger_holes: tool.finger_holes.map(fh => (fh.id === holeId ? patch(fh) : fh)),
+    custom_hole_ids: customIds.includes(holeId) ? customIds : [...customIds, holeId],
+  }
+}
+
+function editHole(
+  tools: PlacedTool[],
+  toolId: string,
+  holeId: string,
+  patch: (hole: FingerHole) => FingerHole,
+): PlacedTool[] {
+  return tools.map(t => (t.id === toolId ? withHoleEdit(t, holeId, patch) : t))
+}
 
 export function BinEditor({
   placedTools,
@@ -154,11 +194,26 @@ export function BinEditor({
     return snapToGridUtil(v, snapGrid)
   }, [snapEnabled, snapGrid])
 
+  const addCutout = (toolId: string, xMm: number, yMm: number) => {
+    if (!isCutoutTool(activeTool)) return
+    const hole = createCutout(activeTool, snapToGrid(xMm), snapToGrid(yMm))
+    onPlacedToolsChange(placedTools.map(t =>
+      t.id === toolId ? { ...t, finger_holes: [...t.finger_holes, hole] } : t
+    ))
+    setSelection({ type: 'hole', toolId, holeId: hole.id })
+  }
+
   const handleToolMouseDown = (toolId: string) => (e: React.MouseEvent) => {
     if (activeTool === 'text') return
     e.stopPropagation()
     const tool = placedTools.find(t => t.id === toolId)
     if (!tool) return
+
+    if (isCutoutTool(activeTool)) {
+      const pos = screenToMm(e.clientX, e.clientY)
+      addCutout(toolId, pos.x, pos.y)
+      return
+    }
 
     setSelection({ type: 'tool', toolId })
     const pos = screenToMm(e.clientX, e.clientY)
@@ -368,6 +423,31 @@ export function BinEditor({
           return { ...l, x: newX, y: newY }
         })
         onLabelsChange(updated)
+      } else if (dragging.type === 'hole') {
+        const nx = snapToGrid(dragging.origX + (pos.x - dragging.startX))
+        const ny = snapToGrid(dragging.origY + (pos.y - dragging.startY))
+        onChange(editHole(currentTools, dragging.toolId, dragging.holeId, fh => ({ ...fh, x: nx, y: ny })))
+      } else if (dragging.type === 'hole-resize') {
+        const { anchorX, anchorY } = dragging
+        onChange(editHole(currentTools, dragging.toolId, dragging.holeId, fh => {
+          if (isRectangularCutout(fh.shape) && anchorX !== undefined && anchorY !== undefined) {
+            const r = resizeRectCutout(anchorX, anchorY, pos.x, pos.y, dragging.rotation || 0)
+            return {
+              ...fh,
+              x: snapToGrid(r.x), y: snapToGrid(r.y),
+              width: r.width, height: r.height,
+              radius: Math.max(r.width, r.height) / 2,
+            }
+          }
+          return { ...fh, radius: resizeRoundCutout(dragging.centerX, dragging.centerY, pos.x, pos.y) }
+        }))
+      } else if (dragging.type === 'hole-rotate') {
+        const currentAngle = Math.atan2(pos.y - dragging.centerY, pos.x - dragging.centerX)
+        const deltaDeg = (currentAngle - dragging.startAngle) * (180 / Math.PI)
+        onChange(editHole(currentTools, dragging.toolId, dragging.holeId, fh => ({
+          ...fh,
+          rotation: (dragging.origRotation + deltaDeg) % 360,
+        })))
       } else if (dragging.type === 'rotate-label') {
         const currentAngle = Math.atan2(pos.y - dragging.centerY, pos.x - dragging.centerX)
         const deltaAngle = (currentAngle - dragging.startAngle) * (180 / Math.PI)
@@ -498,6 +578,14 @@ export function BinEditor({
       return
     }
 
+    if (isCutoutTool(activeTool)) {
+      const pos = screenToMm(e.clientX, e.clientY)
+      // cutouts belong to a tool, so only a click on a tool creates one
+      const target = [...placedTools].reverse().find(t => pointInRing(pos.x, pos.y, t.points))
+      if (target) addCutout(target.id, pos.x, pos.y)
+      return
+    }
+
     setSelection(null)
   }
 
@@ -547,10 +635,98 @@ export function BinEditor({
     }))
   }
 
-  const handleHoleClick = (toolId: string, holeId: string, e: React.MouseEvent) => {
+  const handleHoleMouseDown = (toolId: string, holeId: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    const pos = screenToMm(e.clientX, e.clientY)
+    if (isCutoutTool(activeTool)) {
+      addCutout(toolId, pos.x, pos.y)
+      return
+    }
+    const hole = placedTools.find(t => t.id === toolId)?.finger_holes.find(fh => fh.id === holeId)
+    if (!hole) return
     setSelection({ type: 'hole', toolId, holeId })
+    setDragging({
+      type: 'hole', toolId, holeId,
+      startX: pos.x, startY: pos.y,
+      origX: hole.x, origY: hole.y,
+    })
   }
+
+  const handleHoleResizeMouseDown = (toolId: string, holeId: string, cornerIndex?: number) => (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const hole = placedTools.find(t => t.id === toolId)?.finger_holes.find(fh => fh.id === holeId)
+    if (!hole) return
+
+    // rectangles resize from the opposite corner so the dragged corner follows
+    // the mouse; circles/squares grow around their centre
+    let anchorX: number | undefined
+    let anchorY: number | undefined
+    if (cornerIndex !== undefined && isRectangularCutout(hole.shape) && hole.width && hole.height) {
+      const rot = (hole.rotation || 0) * Math.PI / 180
+      const cosR = Math.cos(rot), sinR = Math.sin(rot)
+      const hw = hole.width / 2, hh = hole.height / 2
+      const local = [{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]
+      const opposite = local[(cornerIndex + 2) % 4]
+      anchorX = hole.x + opposite.x * cosR - opposite.y * sinR
+      anchorY = hole.y + opposite.x * sinR + opposite.y * cosR
+    }
+
+    setSelection({ type: 'hole', toolId, holeId })
+    setDragging({
+      type: 'hole-resize', toolId, holeId,
+      centerX: hole.x, centerY: hole.y,
+      anchorX, anchorY, rotation: hole.rotation,
+    })
+  }
+
+  const handleHoleRotateMouseDown = (toolId: string, holeId: string) => (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const hole = placedTools.find(t => t.id === toolId)?.finger_holes.find(fh => fh.id === holeId)
+    if (!hole) return
+    const pos = screenToMm(e.clientX, e.clientY)
+    setSelection({ type: 'hole', toolId, holeId })
+    setDragging({
+      type: 'hole-rotate', toolId, holeId,
+      centerX: hole.x, centerY: hole.y,
+      startAngle: Math.atan2(pos.y - hole.y, pos.x - hole.x),
+      origRotation: hole.rotation || 0,
+    })
+  }
+
+  const handleDeleteHole = () => {
+    if (selection?.type !== 'hole') return
+    const { toolId, holeId } = selection
+    onPlacedToolsChange(placedTools.map(t => {
+      if (t.id !== toolId) return t
+      const removed = t.removed_hole_ids ?? []
+      return {
+        ...t,
+        finger_holes: t.finger_holes.filter(fh => fh.id !== holeId),
+        // a library cutout must stay deleted for this placement across reloads
+        removed_hole_ids: removed.includes(holeId) ? removed : [...removed, holeId],
+        custom_hole_ids: (t.custom_hole_ids ?? []).filter(id => id !== holeId),
+      }
+    }))
+    setSelection(null)
+  }
+
+  // Delete removes the selected cutout; Escape leaves cutout placement mode
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (e.key === 'Escape' && activeTool !== 'select') {
+        setActiveTool('select')
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selection?.type === 'hole') {
+        e.preventDefault()
+        handleDeleteHole()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
 
   const handleEditingLabelKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') commitEditingLabel()
@@ -582,6 +758,7 @@ export function BinEditor({
           onDuplicateTool={handleDuplicateTool}
           onRemoveTool={handleDeleteTool}
           onRemoveLabel={handleDeleteLabel}
+          onRemoveHole={handleDeleteHole}
           smoothedToolIds={smoothedToolIds}
           smoothLevels={smoothLevels}
           onToggleSmoothed={onToggleSmoothed}
@@ -604,7 +781,9 @@ export function BinEditor({
         wallThickness={wallThickness}
         placedTools={placedTools}
         selection={selection}
-        onHoleClick={handleHoleClick}
+        onHoleMouseDown={handleHoleMouseDown}
+        onHoleResizeMouseDown={handleHoleResizeMouseDown}
+        onHoleRotateMouseDown={handleHoleRotateMouseDown}
         textLabels={textLabels}
         editingLabelId={editingLabelId}
         editingText={editingText}
