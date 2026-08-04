@@ -2,7 +2,7 @@
 
 ## How it works
 
-STL generation uses manifold3d (mesh booleans, 10-100x faster than OCCT B-rep). The gridfinity shell is constructed from first principles using `CrossSection` extrusions and `batch_boolean` operations. Polygon cutouts, finger holes, magnet holes and text labels are subtracted from the bin body in one pass. Filleted rectangle cutouts use a full-depth rounded-bottom cutter profile with a dynamic fillet radius clamped by both one-third of the rectangle width and half the pocket depth.
+STL generation uses manifold3d (mesh booleans, 10-100x faster than OCCT B-rep). The gridfinity shell is constructed from first principles using `CrossSection` extrusions and `batch_boolean` operations. Polygon cutouts, finger holes, magnet holes and text labels are subtracted from the bin body in one pass. Filleted rectangle cutouts use a full-depth rounded-bottom cutter profile with a dynamic fillet radius clamped by both one-third of the rectangle width and half the pocket depth. A cutout line (`shape="line"`) is a stadium cutter -- `width` is the length along its axis, `height` the trench width, so the footprint is a rectangle of `width - height` capped by two half-cylinders of `height / 2`; a line shorter than it is wide degenerates to a single round pocket. Like every finger hole it is cut from the floor face down by its resolved pocket depth and is not clipped to the tool outline, so one line spans a row of tools.
 
 ## Z-Axis Reference Heights
 

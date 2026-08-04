@@ -41,6 +41,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Cylinder mode (flat-bottomed circular, 10mm default)
 - Square mode (20mm default)
 - Rectangle mode (30x20mm default)
+- Cutout line: parametric straight trench with rounded ends (60x8mm default, editable length/width/rotation), spanning several tools as one continuous channel
 - Drag to move, corner handles to resize
 - Rotation handle on rectangular cutouts
 - Per-hole depth override
