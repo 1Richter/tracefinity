@@ -7,7 +7,7 @@ import { BinConfigurator, calcMaxCutoutDepth } from '@/components/BinConfigurato
 import { BinPreview3D } from '@/components/BinPreview3D'
 import { ToolBrowser } from '@/components/ToolBrowser'
 import { getBin, updateBin, generateBinStl, getBinStlUrl, getBinZipUrl, getBinThreemfUrl, getBinInsertUrl, getImageUrl, listTools, updateTool } from '@/lib/api'
-import { buildBinConfig, createPartialBinsValues, getDefaultBinConfig, isCustomSize, resetDefaultBinConfig, saveDefaultBinConfig } from '@/lib/binDefaults'
+import { binSizeMm, buildBinConfig, createPartialBinsValues, getDefaultBinConfig, isCustomSize, resetDefaultBinConfig, saveDefaultBinConfig } from '@/lib/binDefaults'
 import type { BinConfig, BinData, PlacedTool, TextLabel } from '@/types'
 import { Download, Loader2, Package, ChevronDown, Check } from 'lucide-react'
 import { Breadcrumb } from '@/components/Breadcrumb'
@@ -375,8 +375,7 @@ export default function BinPage() {
   const stlUrlWithVersion = stlUrl ? `${stlUrl}?v=${stlVersion}` : null
   const splitUrlsWithVersion = stlUrls.length > 0 ? stlUrls.map(u => `${u}?v=${stlVersion}`) : null
   const insertUrlWithVersion = insertStlUrl ? `${insertStlUrl}?v=${stlVersion}` : null
-  const binW = config.grid_x * GRID_UNIT
-  const binH = config.grid_y * GRID_UNIT
+  const { width: binW, height: binH } = binSizeMm(config)
   const effectiveRimUnits = config.stacking_lip ? config.rim_units : 0
   const hasExports = stlUrl || zipUrl || threemfUrl || insertStlUrl
 

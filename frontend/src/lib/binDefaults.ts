@@ -16,6 +16,17 @@ export function isCustomSize(config: Pick<BinDefaults, 'size_mode' | 'custom_wid
   return config.size_mode === 'custom' && config.custom_width_mm != null && config.custom_depth_mm != null
 }
 
+/** outer size in mm; custom bins report the exact value the user entered,
+ * because deriving it back from the grid is not float-exact (46/42*42 != 46) */
+export function binSizeMm(
+  config: Pick<BinDefaults, 'size_mode' | 'grid_x' | 'grid_y' | 'custom_width_mm' | 'custom_depth_mm'>
+): { width: number; height: number } {
+  if (isCustomSize(config)) {
+    return { width: config.custom_width_mm!, height: config.custom_depth_mm! }
+  }
+  return { width: config.grid_x * GRID_UNIT, height: config.grid_y * GRID_UNIT }
+}
+
 /** human-readable bin size: "480 × 300 mm" for custom bins, "3x2" for unit bins */
 export function formatBinSize(bin: Pick<BinSummary, 'size_mode' | 'grid_x' | 'grid_y' | 'custom_width_mm' | 'custom_depth_mm'>): string {
   if (isCustomSize(bin)) {

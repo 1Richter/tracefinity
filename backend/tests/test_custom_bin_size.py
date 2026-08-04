@@ -236,6 +236,23 @@ def test_split_pieces_of_a_custom_size_fit_the_bed():
     assert all(size <= bed for size in _piece_sizes(total, cuts))
 
 
+def test_a_custom_bin_that_fits_diagonally_is_not_split(tmp_path: Path):
+    """The derived unit count rounds up to whole 42mm cells; that must not make
+    the bin look bigger than it is when deciding whether to split."""
+    generator = ManifoldSTLGenerator()
+    config = _custom(380, 42, height_units=3, magnets=False, bed_size=300)
+    body, _ = generator.generate_bin([], config, str(tmp_path / "bin.stl"))
+
+    # the bin is wider than the bed, so only the diagonal check can save it
+    assert generator._compute_split_points(380, 380 / GF_GRID, 300)
+
+    parts = generator.split_bin(body, None, config, config.bed_size, str(tmp_path), "bin")
+
+    # (380 + 42) / sqrt(2) = 298mm fits the 300mm bed on the diagonal; rounding
+    # the width up to 10 whole cells (420mm) would have forced a needless split
+    assert parts == []
+
+
 def test_split_points_unchanged_for_unit_sizes():
     cuts = ManifoldSTLGenerator._compute_split_points(10 * GF_GRID, 10, 256.0)
     assert cuts == [0.0]

@@ -1592,6 +1592,10 @@ class ManifoldSTLGenerator:
         )
         bin_width = span_x * GF_GRID
         bin_depth = span_y * GF_GRID
+        if getattr(config, "size_mode", "units") == "custom" and not _uses_partial_shell(config):
+            # the derived unit count rounds up to whole cells, which can make a
+            # custom bin look up to 42mm larger than it is on this check
+            bin_width, bin_depth = _outer_dims(config)
 
         fits_diagonal = (bin_width + bin_depth) / math.sqrt(2) <= bed_size
         if fits_diagonal:

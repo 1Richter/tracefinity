@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   binDefaultsFromConfig,
   buildBinConfig,
+  binSizeMm,
   formatBinSize,
   getDefaultBinConfig,
   getDefaultBinDefaults,
@@ -147,6 +148,18 @@ describe('bin defaults', () => {
 
     expect(config.size_mode).toBe('units')
     expect(config.grid_x).toBe(2)
+  })
+
+  it('reports the exact mm size of a custom bin', () => {
+    const config = buildBinConfig({ size_mode: 'custom', custom_width_mm: 46, custom_depth_mm: 300 })
+
+    expect(binSizeMm(config)).toEqual({ width: 46, height: 300 })
+    // 46 / 42 * 42 is not 46 in floating point, so the grid cannot be the source
+    expect(config.grid_x * 42).not.toBe(46)
+  })
+
+  it('reports unit bins from their grid', () => {
+    expect(binSizeMm(buildBinConfig({ grid_x: 3, grid_y: 2 }))).toEqual({ width: 126, height: 84 })
   })
 
   it('formats bin sizes for cards', () => {
