@@ -7,7 +7,7 @@ import { BinConfigurator, calcMaxCutoutDepth } from '@/components/BinConfigurato
 import { BinPreview3D } from '@/components/BinPreview3D'
 import { ToolBrowser } from '@/components/ToolBrowser'
 import { getBin, updateBin, generateBinStl, getBinStlUrl, getBinZipUrl, getBinThreemfUrl, getBinInsertUrl, getImageUrl, listTools, updateTool } from '@/lib/api'
-import { buildBinConfig, createPartialBinsValues, getDefaultBinConfig, resetDefaultBinConfig, saveDefaultBinConfig } from '@/lib/binDefaults'
+import { binSizeMm, buildBinConfig, createPartialBinsValues, getDefaultBinConfig, isCustomSize, resetDefaultBinConfig, saveDefaultBinConfig } from '@/lib/binDefaults'
 import type { BinConfig, BinData, PlacedTool, TextLabel } from '@/types'
 import { Download, Loader2, Package, ChevronDown, Check } from 'lucide-react'
 import { Breadcrumb } from '@/components/Breadcrumb'
@@ -207,7 +207,8 @@ export default function BinPage() {
 
   // auto-size: fit grid to bounding box of all placed tools, recentre if grid changes
   useEffect(() => {
-    if (!autoSize || isDragging || placedTools.length === 0) return
+    // a custom mm size is user-declared; never resize or recentre it
+    if (!autoSize || isDragging || placedTools.length === 0 || config.size_mode === 'custom') return
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     for (const tool of placedTools) {
       for (const p of tool.points) {
@@ -252,7 +253,7 @@ export default function BinPage() {
         ),
       })))
     }
-  }, [autoSize, isDragging, placedTools, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
+  }, [autoSize, isDragging, placedTools, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base, config.size_mode])
 
   const handleToggleSmoothed = useCallback(async (toolId: string, smoothed: boolean) => {
     try {
@@ -288,8 +289,10 @@ export default function BinPage() {
     const margin = 2 * config.wall_thickness + 2 * config.cutout_clearance + 0.5;
     const snap = config.half_grid_base ? 0.5 : 1.0;
     const snapUnit = GRID_UNIT * snap;
-    const needX = Math.max(config.grid_x, Math.ceil((toolW + margin) / snapUnit) * snap);
-    const needY = Math.max(config.grid_y, Math.ceil((toolH + margin) / snapUnit) * snap);
+    // custom mm bins keep their size; the tool is only centred in it
+    const customSize = config.size_mode === 'custom'
+    const needX = customSize ? config.grid_x : Math.max(config.grid_x, Math.ceil((toolW + margin) / snapUnit) * snap);
+    const needY = customSize ? config.grid_y : Math.max(config.grid_y, Math.ceil((toolH + margin) / snapUnit) * snap);
 
     if (needX !== config.grid_x || needY !== config.grid_y) {
         setConfig((prev) => ({
@@ -317,7 +320,7 @@ export default function BinPage() {
     }
 
     setPlacedTools(prev => [...prev, placed])
-  }, [config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
+  }, [config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base, config.size_mode])
 
   function handleDownload() {
     window.open(getBinStlUrl(binId), '_blank')
@@ -380,8 +383,7 @@ export default function BinPage() {
 
   const stlUrlWithVersion = stlUrl ? `${stlUrl}?v=${stlVersion}` : null
   const insertUrlWithVersion = insertStlUrl ? `${insertStlUrl}?v=${stlVersion}` : null
-  const binW = config.grid_x * GRID_UNIT
-  const binH = config.grid_y * GRID_UNIT
+  const { width: binW, height: binH } = binSizeMm(config)
   const effectiveRimUnits = config.stacking_lip ? config.rim_units : 0
   const hasExports = stlUrl || zipUrl || threemfUrl || insertStlUrl
 
@@ -543,7 +545,11 @@ export default function BinPage() {
             <div className="absolute bottom-3.5 left-3.5 right-3.5 z-20 glass-toolbar px-3 py-2 flex items-center justify-between">
               <div className="flex items-center gap-2 text-[11px] text-text-muted">
                 {generating && <Loader2 className="w-3 h-3 animate-spin text-accent" />}
-                <span>{config.grid_x}x{config.grid_y} Grid ({binW} x {binH} mm)</span>
+                <span>
+                  {isCustomSize(config)
+                    ? `Custom ${binW} x ${binH} mm`
+                    : `${config.grid_x}x${config.grid_y} Grid (${binW} x ${binH} mm)`}
+                </span>
                 {placedTools.length > 0 && (
                   <span>· {placedTools.length} tool{placedTools.length !== 1 ? 's' : ''} placed</span>
                 )}

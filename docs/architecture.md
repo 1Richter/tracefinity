@@ -100,4 +100,4 @@ When `TOOL_LABEL_PROVIDER=ollama`, `tool_namer.py` runs after contour extraction
 `routes.py` uses shared helpers to avoid duplication:
 - `_run_generate()` -- cache check, STL generation, split, zip, response. Used by both session and bin generation endpoints.
 - `_translate_points()` / `_translate_finger_holes()` -- offset points/holes by (dx, dy). Used when placing tools in bins.
-- `BinParams` base model in `schemas.py` -- shared fields and validators inherited by `BinConfig` and `GenerateRequest`.
+- `BinParams` base model in `schemas.py` -- shared fields and validators inherited by `BinConfig` and `GenerateRequest`. Its `resolve_size_mode` validator derives `grid_x`/`grid_y` from `custom_width_mm`/`custom_depth_mm` when `size_mode == "custom"` (see docs/stl-generation.md); bins stored before custom sizing default to `"units"` and load unchanged.

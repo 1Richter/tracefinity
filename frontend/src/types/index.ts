@@ -109,9 +109,16 @@ export interface GenerateResponse {
   warning?: string | null
 }
 
+// 'units' sizes the bin in gridfinity units, 'custom' in exact outer mm
+export type BinSizeMode = 'units' | 'custom'
+
 export interface BinDefaults {
   grid_x: number
   grid_y: number
+  size_mode: BinSizeMode
+  // set in custom mode only; grid_x/grid_y are then derived from them
+  custom_width_mm: number | null
+  custom_depth_mm: number | null
   height_units: number
   magnets: boolean
   magnet_diameter: number
@@ -291,5 +298,8 @@ export interface BinSummary {
   has_stl: boolean
   grid_x: number
   grid_y: number
+  size_mode: BinSizeMode
+  custom_width_mm: number | null
+  custom_depth_mm: number | null
   preview_tools: BinPreviewTool[]
 }

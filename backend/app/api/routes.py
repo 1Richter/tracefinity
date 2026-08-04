@@ -394,17 +394,20 @@ def _build_bin_from_tools(
         needed_w = tool_width + 2 * clearance + 2 * wall + 0.5
         needed_h = tool_height + 2 * clearance + 2 * wall + 0.5
 
-        # snap to 0.5 units when half-grid is on, whole units otherwise
-        if bc.half_grid_base:
-            half = GF_GRID / 2
-            grid_x = max(1.0, math.ceil(needed_w / half) * 0.5)
-            grid_y = max(1.0, math.ceil(needed_h / half) * 0.5)
-        else:
-            grid_x = max(1.0, math.ceil(needed_w / GF_GRID))
-            grid_y = max(1.0, math.ceil(needed_h / GF_GRID))
-        bc.grid_x = min(grid_x, 10.0)
-        bc.grid_y = min(grid_y, 10.0)
-        bc.partial_bins_values = [True] * (math.ceil(bc.grid_x) * math.ceil(bc.grid_y))
+        # custom mm bins keep the size the user asked for; only the tool
+        # placement below is adjusted to it
+        if bc.size_mode != "custom":
+            # snap to 0.5 units when half-grid is on, whole units otherwise
+            if bc.half_grid_base:
+                half = GF_GRID / 2
+                grid_x = max(1.0, math.ceil(needed_w / half) * 0.5)
+                grid_y = max(1.0, math.ceil(needed_h / half) * 0.5)
+            else:
+                grid_x = max(1.0, math.ceil(needed_w / GF_GRID))
+                grid_y = max(1.0, math.ceil(needed_h / GF_GRID))
+            bc.grid_x = min(grid_x, 10.0)
+            bc.grid_y = min(grid_y, 10.0)
+            bc.partial_bins_values = [True] * (math.ceil(bc.grid_x) * math.ceil(bc.grid_y))
 
         bin_w = bc.grid_x * GF_GRID
         bin_h = bc.grid_y * GF_GRID
@@ -1584,6 +1587,9 @@ async def list_bins(request: Request, user_id: str = Depends(get_user_id)):
             has_stl=bin_data.stl_path is not None,
             grid_x=bin_data.bin_config.grid_x,
             grid_y=bin_data.bin_config.grid_y,
+            size_mode=bin_data.bin_config.size_mode,
+            custom_width_mm=bin_data.bin_config.custom_width_mm,
+            custom_depth_mm=bin_data.bin_config.custom_depth_mm,
             preview_tools=[BinPreviewTool(points=pt.points, interior_rings=pt.interior_rings) for pt in bin_data.placed_tools],
         ))
     summaries.sort(key=lambda b: b.created_at or "", reverse=True)
@@ -1732,6 +1738,9 @@ def generate_bin_stl(request: Request, bin_id: str, user_id: str = Depends(get_u
     gen_req = GenerateRequest(
         grid_x=bc.grid_x,
         grid_y=bc.grid_y,
+        size_mode=bc.size_mode,
+        custom_width_mm=bc.custom_width_mm,
+        custom_depth_mm=bc.custom_depth_mm,
         height_units=bc.height_units,
         magnets=bc.magnets,
         magnet_diameter=bc.magnet_diameter,
@@ -1771,9 +1780,11 @@ def _bin_stem(bin_data) -> str:
     bc = bin_data.bin_config
     raw = (bin_data.name or "bin").strip()
     safe = re.sub(r"[^\w\-]", "_", raw).strip("_") or "bin"
-    gx = f"{bc.grid_x:g}"
-    gy = f"{bc.grid_y:g}"
-    return f"{safe}_{gx}u{gy}u{bc.height_units}u_{int(bc.cutout_depth)}mm-tracefinity"
+    if bc.size_mode == "custom":
+        size = f"{bc.custom_width_mm:g}x{bc.custom_depth_mm:g}mm_"
+    else:
+        size = f"{bc.grid_x:g}u{bc.grid_y:g}u"
+    return f"{safe}_{size}{bc.height_units}u_{int(bc.cutout_depth)}mm-tracefinity"
 
 
 # bin file downloads

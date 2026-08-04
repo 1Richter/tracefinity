@@ -4,7 +4,19 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.constants import PaperSize
+from app.constants import (
+    CUSTOM_SIZE_MAX_MM,
+    CUSTOM_SIZE_MIN_MM,
+    GF_GRID,
+    MAX_GRID_UNITS,
+    PaperSize,
+)
+
+# "units" sizes the bin in gridfinity units, "custom" in exact outer mm
+SizeMode = Literal["units", "custom"]
+
+# upper bound for the derived unit count in custom mode
+MAX_DERIVED_GRID_UNITS = CUSTOM_SIZE_MAX_MM / GF_GRID
 
 
 class Point(BaseModel):
@@ -83,6 +95,11 @@ class PolygonsRequest(BaseModel):
 class BinParams(BaseModel):
     grid_x: float = 2
     grid_y: float = 2
+    # custom mode sizes the bin in mm; grid_x/grid_y are then derived from the
+    # mm size, so bins written before custom sizing load unchanged
+    size_mode: SizeMode = "units"
+    custom_width_mm: float | None = None
+    custom_depth_mm: float | None = None
     height_units: int = 4
     magnets: bool = True
     magnet_diameter: float = 6.0
@@ -104,6 +121,28 @@ class BinParams(BaseModel):
     partial_bins_retain_wall: bool = False
 
     @model_validator(mode="after")
+    def resolve_size_mode(self) -> "BinParams":
+        """Derive grid_x/grid_y from the mm size in custom mode.
+
+        Everything downstream (base cells, magnets, partial bins, splitting)
+        already works in fractional gridfinity units, so custom mm sizes only
+        need the unit count derived from them; the exact outer footprint comes
+        from custom_width_mm/custom_depth_mm in the generator.
+        """
+        if self.size_mode == "custom":
+            if self.custom_width_mm is None or self.custom_depth_mm is None:
+                raise ValueError("custom size mode requires custom_width_mm and custom_depth_mm")
+            self.grid_x = self.custom_width_mm / GF_GRID
+            self.grid_y = self.custom_depth_mm / GF_GRID
+        else:
+            for value in (self.grid_x, self.grid_y):
+                if value > MAX_GRID_UNITS:
+                    raise ValueError(f"grid size must be between 1 and {MAX_GRID_UNITS:.0f}")
+                if value * 2 != int(value * 2):
+                    raise ValueError("grid size must be a multiple of 0.5")
+        return self
+
+    @model_validator(mode="after")
     def normalize_partial_bins_values(self) -> "BinParams":
         import math
 
@@ -119,11 +158,22 @@ class BinParams(BaseModel):
     @field_validator("grid_x", "grid_y")
     @classmethod
     def validate_grid(cls, v: float) -> float:
-        if v < 1 or v > 10:
-            raise ValueError("grid size must be between 1 and 10")
-        # must be a multiple of 0.5
-        if v * 2 != int(v * 2):
-            raise ValueError("grid size must be a multiple of 0.5")
+        # the 1-10 / half-unit rules only apply to unit mode and are enforced
+        # in resolve_size_mode; custom mode derives grid values up to
+        # CUSTOM_SIZE_MAX_MM / 42u, which this bound still has to allow
+        if v < 1 or v > MAX_DERIVED_GRID_UNITS + 1e-9:
+            raise ValueError(f"grid size must be between 1 and {MAX_GRID_UNITS:.0f}")
+        return v
+
+    @field_validator("custom_width_mm", "custom_depth_mm")
+    @classmethod
+    def validate_custom_size(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if v < CUSTOM_SIZE_MIN_MM or v > CUSTOM_SIZE_MAX_MM:
+            raise ValueError(
+                f"custom size must be between {CUSTOM_SIZE_MIN_MM:.0f} and {CUSTOM_SIZE_MAX_MM:.0f}mm"
+            )
         return v
 
     @field_validator("height_units")
@@ -539,6 +589,9 @@ class BinSummary(BaseModel):
     has_stl: bool
     grid_x: float = 2
     grid_y: float = 2
+    size_mode: SizeMode = "units"
+    custom_width_mm: float | None = None
+    custom_depth_mm: float | None = None
     preview_tools: list[BinPreviewTool] = []
 
 

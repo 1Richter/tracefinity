@@ -1,6 +1,9 @@
 export const GRID_UNIT = 42
 /** print bed edge in mm, used as the factory bin default and by the 3D preview */
 export const DEFAULT_BED_SIZE_MM = 256
+// custom (mm) bin sizing limits, mirrors backend app/constants.py
+export const CUSTOM_SIZE_MIN_MM = GRID_UNIT
+export const CUSTOM_SIZE_MAX_MM = 1000
 export const DISPLAY_SCALE = 8
 export const SNAP_GRID = 5 // default snap increment in mm
 export const SNAP_GRID_MIN = 0.5

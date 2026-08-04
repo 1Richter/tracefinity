@@ -33,6 +33,9 @@ const bin = (toolIds: string[]): BinSummary => ({
   has_stl: false,
   grid_x: 2,
   grid_y: 2,
+  size_mode: 'units',
+  custom_width_mm: null,
+  custom_depth_mm: null,
   preview_tools: [],
 })
 

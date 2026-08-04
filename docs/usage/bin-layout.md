@@ -71,6 +71,7 @@ The sidebar controls all bin parameters:
 | Setting | Description |
 |-|-|
 | Grid Width / Depth | Bin size in gridfinity units (42mm each). 1-10. |
+| Custom size (mm) | Size the bin in exact outer millimetres (42-1000mm) instead of gridfinity units, so it fills a drawer or shelf. Base feet and magnets stay on the 42mm grid; auto-size is disabled. |
 | Height | Bin height in units (7mm each + 4.75mm base). |
 | Cutout Depth | How deep tool pockets are cut. |
 | Clearance | Extra space around tool outlines. |
