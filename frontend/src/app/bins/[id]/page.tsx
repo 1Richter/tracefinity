@@ -1,20 +1,21 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { BinEditor } from '@/components/BinEditor'
 import { BinConfigurator, calcMaxCutoutDepth } from '@/components/BinConfigurator'
 import { BinPreview3D } from '@/components/BinPreview3D'
 import { ToolBrowser } from '@/components/ToolBrowser'
 import { getBin, updateBin, generateBinStl, getBinStlUrl, getBinZipUrl, getBinThreemfUrl, getBinInsertUrl, getImageUrl, listTools, updateTool } from '@/lib/api'
-import { buildBinConfig, createPartialBinsValues, getDefaultBinConfig, resetDefaultBinConfig, saveDefaultBinConfig } from '@/lib/binDefaults'
+import { binSizeMm, buildBinConfig, createPartialBinsValues, getDefaultBinConfig, isCustomSize, resetDefaultBinConfig, saveDefaultBinConfig } from '@/lib/binDefaults'
 import type { BinConfig, BinData, PlacedTool, TextLabel } from '@/types'
 import { Download, Loader2, Package, ChevronDown, Check } from 'lucide-react'
 import { Breadcrumb } from '@/components/Breadcrumb'
 import { Alert } from '@/components/Alert'
 import { useDebouncedSave } from '@/hooks/useDebouncedSave'
 import { useProjectSource } from '@/hooks/useProjectSource'
-import { GRID_UNIT } from '@/lib/constants'
+import { clampGridUnits, GRID_MAX_UNITS, GRID_UNIT } from '@/lib/constants'
+import { gridUnitsForSpan, pointBounds } from '@/lib/binGrid'
 import { useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
 
@@ -44,6 +45,7 @@ export default function BinPage() {
   const [zipUrl, setZipUrl] = useState<string | null>(null)
   const [insertStlUrl, setInsertStlUrl] = useState<string | null>(null)
   const [splitCount, setSplitCount] = useState(1)
+  const [splitField, setSplitField] = useState({ cols: 0, rows: 0 })
   const [stlVersion, setStlVersion] = useState(0)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -148,6 +150,7 @@ export default function BinPage() {
       setZipUrl(result.zip_url ? getImageUrl(result.zip_url) : null)
       setInsertStlUrl(result.insert_stl_url ? getImageUrl(result.insert_stl_url) : null)
       setSplitCount(result.split_count || 1)
+      setSplitField({ cols: result.split_cols || 0, rows: result.split_rows || 0 })
       setStlVersion(v => v + 1)
       setWarning(result.warning || null)
     } catch (err) {
@@ -203,25 +206,32 @@ export default function BinPage() {
     setPlacedTools(updated)
   }, [])
 
+  const gridMargin = 2 * config.wall_thickness + 2 * config.cutout_clearance + 0.5
+  const gridSnap = config.half_grid_base ? 0.5 : 1.0
+
+  const toolBounds = useMemo(
+    () => pointBounds(placedTools.map(tool => tool.points)),
+    [placedTools],
+  )
+
+  // auto-size works from tool bounds alone and can ask for more than the backend
+  // accepts (validate_grid: 1-10u), so both grid writers clamp. Derive the banner
+  // from the tools rather than from the clamp: a stored flag survives deleting the
+  // oversized tool, and adding a small one afterwards would wrongly clear it.
+  const gridClamped = useMemo(() => {
+    if (!autoSize || !toolBounds) return false
+    const wantX = gridUnitsForSpan(toolBounds.maxX - toolBounds.minX, gridMargin, gridSnap)
+    const wantY = gridUnitsForSpan(toolBounds.maxY - toolBounds.minY, gridMargin, gridSnap)
+    return wantX > GRID_MAX_UNITS || wantY > GRID_MAX_UNITS
+  }, [autoSize, toolBounds, gridMargin, gridSnap])
+
   // auto-size: fit grid to bounding box of all placed tools, recentre if grid changes
   useEffect(() => {
-    if (!autoSize || isDragging || placedTools.length === 0) return
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const tool of placedTools) {
-      for (const p of tool.points) {
-        minX = Math.min(minX, p.x)
-        minY = Math.min(minY, p.y)
-        maxX = Math.max(maxX, p.x)
-        maxY = Math.max(maxY, p.y)
-      }
-    }
-    const halfMargin = config.wall_thickness + config.cutout_clearance + 0.25
-    const toolW = maxX - minX
-    const toolH = maxY - minY
-    const snap = config.half_grid_base ? 0.5 : 1.0;
-    const snapUnit = GRID_UNIT * snap;
-    const needX = Math.max(1, Math.ceil((toolW + 2 * halfMargin) / snapUnit) * snap);
-    const needY = Math.max(1, Math.ceil((toolH + 2 * halfMargin) / snapUnit) * snap);
+    // a custom mm size is user-declared; never resize or recentre it
+    if (!autoSize || isDragging || !toolBounds || config.size_mode === 'custom') return
+    const { minX, minY, maxX, maxY } = toolBounds
+    const needX = clampGridUnits(gridUnitsForSpan(maxX - minX, gridMargin, gridSnap))
+    const needY = clampGridUnits(gridUnitsForSpan(maxY - minY, gridMargin, gridSnap))
 
     const gridChanged = config.grid_x !== needX || config.grid_y !== needY
     if (gridChanged) {
@@ -250,7 +260,7 @@ export default function BinPage() {
         ),
       })))
     }
-  }, [autoSize, isDragging, placedTools, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
+  }, [autoSize, isDragging, toolBounds, gridMargin, gridSnap, config.grid_x, config.grid_y, config.size_mode])
 
   const handleToggleSmoothed = useCallback(async (toolId: string, smoothed: boolean) => {
     try {
@@ -273,21 +283,24 @@ export default function BinPage() {
   }, [])
 
   const handleAddTool = useCallback((tool: PlacedTool) => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const p of tool.points) {
-      minX = Math.min(minX, p.x)
-      minY = Math.min(minY, p.y)
-      maxX = Math.max(maxX, p.x)
-      maxY = Math.max(maxY, p.y)
+    const bounds = pointBounds([tool.points])
+    if (!bounds) {
+      // nothing to measure, so nothing to grow or centre against; place it as
+      // it came rather than dropping a tool the user asked for
+      setPlacedTools(prev => [...prev, tool])
+      return
     }
-    const toolW = maxX - minX
-    const toolH = maxY - minY
+    const { minX, minY, maxX, maxY } = bounds
 
-    const margin = 2 * config.wall_thickness + 2 * config.cutout_clearance + 0.5;
-    const snap = config.half_grid_base ? 0.5 : 1.0;
-    const snapUnit = GRID_UNIT * snap;
-    const needX = Math.max(config.grid_x, Math.ceil((toolW + margin) / snapUnit) * snap);
-    const needY = Math.max(config.grid_y, Math.ceil((toolH + margin) / snapUnit) * snap);
+    // grow to fit the new tool, never shrink below what the bin already is;
+    // a custom mm bin keeps its size and only centres the tool in it
+    const customSize = config.size_mode === 'custom'
+    const needX = customSize ? config.grid_x : clampGridUnits(
+      Math.max(config.grid_x, gridUnitsForSpan(maxX - minX, gridMargin, gridSnap)),
+    )
+    const needY = customSize ? config.grid_y : clampGridUnits(
+      Math.max(config.grid_y, gridUnitsForSpan(maxY - minY, gridMargin, gridSnap)),
+    )
 
     if (needX !== config.grid_x || needY !== config.grid_y) {
         setConfig((prev) => ({
@@ -315,7 +328,7 @@ export default function BinPage() {
     }
 
     setPlacedTools(prev => [...prev, placed])
-  }, [config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base])
+  }, [config.grid_x, config.grid_y, gridMargin, gridSnap, config.size_mode])
 
   function handleDownload() {
     window.open(getBinStlUrl(binId), '_blank')
@@ -341,6 +354,13 @@ export default function BinPage() {
       defaultsStatusTimeoutRef.current = null
     }, 2500)
   }
+
+  // stable identity: the preview reloads every part when this array changes,
+  // and rebuilding it each render made that happen on any re-render at all
+  const splitUrlsWithVersion = useMemo(
+    () => (stlUrls.length > 0 ? stlUrls.map(u => `${u}?v=${stlVersion}`) : null),
+    [stlUrls, stlVersion],
+  )
 
   function handleSaveDefaults() {
     saveDefaultBinConfig(config)
@@ -370,10 +390,8 @@ export default function BinPage() {
   }
 
   const stlUrlWithVersion = stlUrl ? `${stlUrl}?v=${stlVersion}` : null
-  const splitUrlsWithVersion = stlUrls.length > 0 ? stlUrls.map(u => `${u}?v=${stlVersion}`) : null
   const insertUrlWithVersion = insertStlUrl ? `${insertStlUrl}?v=${stlVersion}` : null
-  const binW = config.grid_x * GRID_UNIT
-  const binH = config.grid_y * GRID_UNIT
+  const { width: binW, height: binH } = binSizeMm(config)
   const effectiveRimUnits = config.stacking_lip ? config.rim_units : 0
   const hasExports = stlUrl || zipUrl || threemfUrl || insertStlUrl
 
@@ -432,6 +450,14 @@ export default function BinPage() {
           {warning && (
             <InfoBanner>{warning}</InfoBanner>
           )}
+          {gridClamped && (
+            <InfoBanner>
+              These tools need more room than the maximum bin size of {GRID_MAX_UNITS}x{GRID_MAX_UNITS}u
+              ({GRID_MAX_UNITS * GRID_UNIT} x {GRID_MAX_UNITS * GRID_UNIT} mm), so auto-size stopped
+              growing the grid and anything past the wall is cut off in the STL. Split them across
+              two bins, and check that no single tool is longer than {GRID_MAX_UNITS * GRID_UNIT}mm.
+            </InfoBanner>
+          )}
           {splitCount > 1 && (
             <InfoBanner>Split into {splitCount} pieces</InfoBanner>
           )}
@@ -471,7 +497,7 @@ export default function BinPage() {
                       className="w-full text-left px-3 py-1.5 text-[11px] text-text-secondary hover:bg-glass-hover hover:text-text-primary transition-colors cursor-pointer flex items-center gap-2"
                     >
                       <Package className="w-3 h-3" />
-                      3MF
+                      {zipUrl ? 'Full 3MF' : '3MF'}
                     </button>
                   )}
                   {insertStlUrl && (
@@ -535,7 +561,11 @@ export default function BinPage() {
             <div className="absolute bottom-3.5 left-3.5 right-3.5 z-20 glass-toolbar px-3 py-2 flex items-center justify-between">
               <div className="flex items-center gap-2 text-[11px] text-text-muted">
                 {generating && <Loader2 className="w-3 h-3 animate-spin text-accent" />}
-                <span>{config.grid_x}x{config.grid_y} Grid ({binW} x {binH} mm)</span>
+                <span>
+                  {isCustomSize(config)
+                    ? `Custom ${binW} x ${binH} mm`
+                    : `${config.grid_x}x${config.grid_y} Grid (${binW} x ${binH} mm)`}
+                </span>
                 {placedTools.length > 0 && (
                   <span>· {placedTools.length} tool{placedTools.length !== 1 ? 's' : ''} placed</span>
                 )}
@@ -563,7 +593,14 @@ export default function BinPage() {
                 </div>
               )}
               {stlUrlWithVersion ? (
-                <BinPreview3D stlUrl={stlUrlWithVersion} splitUrls={splitUrlsWithVersion || undefined} insertUrl={insertUrlWithVersion || undefined} />
+                <BinPreview3D
+                  stlUrl={stlUrlWithVersion}
+                  splitUrls={splitUrlsWithVersion || undefined}
+                  insertUrl={insertUrlWithVersion || undefined}
+                  bedSize={config.bed_size}
+                  splitCols={splitField.cols}
+                  splitRows={splitField.rows}
+                />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-text-muted text-xs gap-2">
                   {generating ? (

@@ -1,17 +1,28 @@
 'use client'
 
-import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, GizmoHelper, GizmoViewport, Bounds, useBounds } from '@react-three/drei'
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { Box, RotateCcw, ArrowUp, ArrowRight, CircleDot, Triangle } from 'lucide-react'
+import { layOutCutField, type PartSize } from '@/lib/bedLayout'
+import { DEFAULT_BED_SIZE_MM } from '@/lib/constants'
 
 interface Props {
   stlUrl: string
   splitUrls?: string[]
   insertUrl?: string
+  /** print bed edge length in mm; the floor grid is drawn at this size */
+  bedSize?: number
+  /** the field the backend cut splitUrls into; 0 when there is no regular one */
+  splitCols?: number
+  splitRows?: number
 }
+
+// target cell size; the real cell is the bed divided into whole cells. Not the
+// 42mm gridfinity unit -- this grid measures the print bed, not the bin.
+const GRID_CELL_MM = 10
 
 type CameraView = 'home' | 'top' | 'front' | 'right' | 'fit'
 
@@ -92,14 +103,26 @@ function StlModel({ url, renderMode, color = '#5ab4de', edgeColor = '#1e3d5c' }:
 }
 
 const SPLIT_PIECE_COLORS = ['#4a9eff', '#ff6b4a', '#4aff9e', '#ff4adb']
+const SPLIT_PIECE_GAP_MM = 10
 
-function SplitModels({ urls, renderMode }: { urls: string[]; renderMode: RenderMode }) {
-  const [pieces, setPieces] = useState<{ geo: THREE.BufferGeometry; edges: THREE.EdgesGeometry; offset: number }[]>([])
+interface LoadedPiece {
+  geo: THREE.BufferGeometry
+  edges: THREE.EdgesGeometry
+  size: PartSize
+}
 
+function SplitModels(
+  { urls, renderMode, cols, rows }:
+  { urls: string[]; renderMode: RenderMode; cols: number; rows: number }
+) {
+  const [pieces, setPieces] = useState<LoadedPiece[]>([])
+
+  // keyed on urls alone: the layout must not re-download every piece when the
+  // bed size or the cut plan changes
   useEffect(() => {
     const loader = new STLLoader()
     let cancelled = false
-    let loadedPieces: { geo: THREE.BufferGeometry; edges: THREE.EdgesGeometry }[] = []
+    let loadedPieces: LoadedPiece[] = []
 
     Promise.all(urls.map(url =>
       new Promise<THREE.BufferGeometry | null>((resolve) => {
@@ -113,20 +136,21 @@ function SplitModels({ urls, renderMode }: { urls: string[]; renderMode: RenderM
         return
       }
 
-      const GAP = 10
-      const boxes = geos.map(g => { g.computeBoundingBox(); return g.boundingBox! })
-      const totalWidth = boxes.reduce((sum, b) => sum + (b.max.x - b.min.x), 0) + GAP * (geos.length - 1)
-      let xOffset = -totalWidth / 2
-
-      const result = geos.map((geo, i) => {
-        const box = boxes[i]
-        const w = box.max.x - box.min.x
-        const centerY = (box.max.y + box.min.y) / 2
-        const minZ = box.min.z
-        geo.translate(-((box.max.x + box.min.x) / 2) + xOffset + w / 2, -centerY, -minZ)
-        xOffset += w + GAP
-        const edges = new THREE.EdgesGeometry(geo, 30)
-        return { geo, edges, offset: 0 }
+      const result = geos.map(geo => {
+        geo.computeBoundingBox()
+        const box = geo.boundingBox!
+        // centre each piece on its own origin and sit it on the floor; where
+        // it goes from there is the layout's business
+        geo.translate(
+          -(box.max.x + box.min.x) / 2,
+          -(box.max.y + box.min.y) / 2,
+          -box.min.z,
+        )
+        return {
+          geo,
+          edges: new THREE.EdgesGeometry(geo, 30),
+          size: { w: box.max.x - box.min.x, d: box.max.y - box.min.y },
+        }
       })
 
       loadedPieces = result
@@ -139,12 +163,31 @@ function SplitModels({ urls, renderMode }: { urls: string[]; renderMode: RenderM
     }
   }, [urls])
 
+  const offsets = useMemo(
+    () => layOutCutField(pieces.map(p => p.size), cols, rows, SPLIT_PIECE_GAP_MM),
+    [pieces, cols, rows],
+  )
+
+  // the camera fits once on load, but a field is several times the size of one
+  // bin and changes shape with the bed size, so refit when that shape changes.
+  // Only then: every edit regenerates and reloads the pieces, and refitting on
+  // each of those would throw away whatever the user had orbited to.
+  const bounds = useBounds()
+  const fieldShape = `${pieces.length}:${cols}x${rows}`
+  const fittedShape = useRef<string | null>(null)
+  useEffect(() => {
+    if (pieces.length === 0 || fittedShape.current === fieldShape) return
+    fittedShape.current = fieldShape
+    const t = setTimeout(() => bounds.refresh().fit(), 50)
+    return () => clearTimeout(t)
+  }, [bounds, fieldShape, pieces.length])
+
   if (pieces.length === 0) return null
 
   return (
     <group rotation={[-Math.PI / 2, 0, 0]}>
       {pieces.map((piece, i) => (
-        <group key={i}>
+        <group key={i} position={[offsets[i].x, offsets[i].y, 0]}>
           {renderMode === 'solid' ? (
             <>
               <mesh geometry={piece.geo}>
@@ -219,10 +262,13 @@ function CameraController() {
   return null
 }
 
-function GridFloor() {
+// floor grid drawn at the configured print bed size, so the preview shows
+// whether the bin (or a split part) fits on the bed
+function GridFloor({ bedSize }: { bedSize: number }) {
+  const divisions = Math.max(2, Math.round(bedSize / GRID_CELL_MM))
   return (
     <gridHelper
-      args={[300, 30, '#3f3f46', '#27272a']}
+      args={[bedSize, divisions, '#3f3f46', '#27272a']}
       rotation={[0, 0, 0]}
       position={[0, 0, 0]}
     />
@@ -246,8 +292,18 @@ const viewButtons: { view: CameraView; icon: typeof Box; label: string }[] = [
   { view: 'fit', icon: Box, label: 'Fit' },
 ]
 
-export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
+export function BinPreview3D({
+  stlUrl,
+  splitUrls,
+  insertUrl,
+  bedSize = DEFAULT_BED_SIZE_MM,
+  splitCols = 0,
+  splitRows = 0,
+}: Props) {
   const [renderMode, setRenderMode] = useState<RenderMode>('solid')
+  // bed_size 0 means the user turned splitting off; the floor grid still
+  // needs a size, so fall back to the default rather than drawing nothing
+  const bed = bedSize > 0 ? bedSize : DEFAULT_BED_SIZE_MM
   const dispatchView = useCallback((view: CameraView) => {
     window.dispatchEvent(new CustomEvent('bin-preview-view', { detail: view }))
   }, [])
@@ -264,7 +320,7 @@ export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
         <Suspense fallback={<LoadingFallback />}>
           <Bounds clip margin={1.15}>
             {splitUrls && splitUrls.length > 0 ? (
-              <SplitModels urls={splitUrls} renderMode={renderMode} />
+              <SplitModels urls={splitUrls} renderMode={renderMode} cols={splitCols} rows={splitRows} />
             ) : (
               <StlModel url={stlUrl} renderMode={renderMode} />
             )}
@@ -273,7 +329,7 @@ export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
           </Bounds>
         </Suspense>
 
-        <GridFloor />
+        <GridFloor bedSize={bed} />
         <GizmoHelper alignment="bottom-right" margin={[60, 60]}>
           <GizmoViewport labelColor="white" axisHeadScale={0.8} />
         </GizmoHelper>
@@ -282,7 +338,7 @@ export function BinPreview3D({ stlUrl, splitUrls, insertUrl }: Props) {
           enableZoom={true}
           enableRotate={true}
           minDistance={50}
-          maxDistance={500}
+          maxDistance={Math.max(500, bed * 3)}
           makeDefault
         />
       </Canvas>

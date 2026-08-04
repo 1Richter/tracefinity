@@ -9,6 +9,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Paper size presets (A4, Letter, A3, Tabloid)
 - Photo quality warnings before tracing (camera too close via EXIF focal length, paper cut off at the frame edge, extreme perspective)
 - AI tracing (multiple tracer backends: IS-Net, BiRefNet, InSPyReNet)
+- Last used tracer remembered per browser and preselected on the next visit
 - Remote tracing via Replicate (`REPLICATE_API_TOKEN`, model `men1scus/birefnet` by default; `REPLICATE_RESOLUTION` optional)
 - Remote tracing via fal.ai (`FAL_KEY`, model `fal-ai/birefnet/v2` by default; `FAL_OPERATING_RESOLUTION` default `1024x1024`). Uses `sync_mode` so results are not stored in fal request history; Replicate predictions auto-purge after ~1h.
 - Manual mask upload
@@ -41,14 +42,17 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Cylinder mode (flat-bottomed circular, 10mm default)
 - Square mode (20mm default)
 - Rectangle mode (30x20mm default)
+- Cutout line: parametric straight trench with rounded ends (60x8mm default, editable length/width/rotation), spanning several tools as one continuous channel
 - Drag to move, corner handles to resize
 - Rotation handle on rectangular cutouts
 - Per-hole depth override
+- Maximum pocket depth shown in the bin editor toolbar; deeper values clamp so cutouts cannot break through the bin floor
 - Delete individual holes
 
 ## Bin Configuration
 
 - Grid sizing (width/depth in gridfinity units, 1-10, 0.5-unit increments for 21mm half-grid)
+- Custom size mode: exact outer width/depth in mm (42-1000mm) for drawer- or shelf-sized bins
 - Bin height in units (7mm each + 4.75mm base)
 - Cutout depth (5mm to max)
 - Clearance (0-5mm extra space around tools)
@@ -61,7 +65,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Insert mode (contrast insert with configurable height)
 - Bed size for auto-splitting large bins
 - Partial bins (disable individual grid cells to reduce print volume)
-- Auto-size grid to fit placed tools
+- Auto-size grid to fit placed tools (clamped to the 10u / 420mm maximum, with a hint when a tool needs more room)
 - Save/reset default bin configuration (global and per-project)
 
 ## Bin Layout and Placement
@@ -72,13 +76,15 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Text labels with emboss/recess options
 - Label editing (text, font size, emboss depth)
 - Per-tool cutout depth override
+- Duplicate a placed tool into an independent copy (Ctrl+C/Ctrl+V, Ctrl+D, or the toolbar button)
+- Cutouts editable per placement: add (circle, cylinder, square, rectangle, filleted rectangle), move, resize, rotate, delete -- without leaving the bin or changing the library tool
 - Auto-centre tools in expanded grids
 - Centre view (fit all to viewport)
 
 ## Export
 
 - STL download (single or multi-part)
-- 3MF export (for slicers supporting it)
+- 3MF export for every whole bin (unit-aware, keeps the mm scale that CAD tools can lose on an STL import). Split parts are STL only.
 - ZIP export (split parts as separate STLs)
 - Insert STL (separate contrast insert model)
 - SVG export (from tool editor)
@@ -89,6 +95,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Create named projects
 - Project status (active, ready_to_print, printed, archived)
 - Add/remove tools from projects
+- Per-tool quantity (plan for N copies of the same tool, tracked as "2/3 placed")
 - Link/detach bins
 - Create bin from project (with preset config)
 - Project health check (validate assignments)
@@ -111,7 +118,8 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 ## 3D Preview
 
 - Interactive real-time 3D viewer (react-three-fiber)
-- Split visualisation for multi-part bins
+- Floor grid drawn at the configured print bed size (cells of roughly 10mm)
+- Split visualisation for multi-part bins, laid out in the field the backend actually cut (a 3x3 split shows as 3x3), with the bed grid underneath for scale
 - Insert display when enabled
 - Pan/zoom/rotate
 

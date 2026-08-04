@@ -2,7 +2,7 @@
 
 ## How it works
 
-STL generation uses manifold3d (mesh booleans, 10-100x faster than OCCT B-rep). The gridfinity shell is constructed from first principles using `CrossSection` extrusions and `batch_boolean` operations. Polygon cutouts, finger holes, magnet holes and text labels are subtracted from the bin body in one pass. Filleted rectangle cutouts use a full-depth rounded-bottom cutter profile with a dynamic fillet radius clamped by both one-third of the rectangle width and half the pocket depth.
+STL generation uses manifold3d (mesh booleans, 10-100x faster than OCCT B-rep). The gridfinity shell is constructed from first principles using `CrossSection` extrusions and `batch_boolean` operations. Polygon cutouts, finger holes, magnet holes and text labels are subtracted from the bin body in one pass. Filleted rectangle cutouts use a full-depth rounded-bottom cutter profile with a dynamic fillet radius clamped by both one-third of the rectangle width and half the pocket depth. A cutout line (`shape="line"`) is a stadium cutter -- `width` is the length along its axis, `height` the trench width, so the footprint is a rectangle of `width - height` capped by two half-cylinders of `height / 2`; a line shorter than it is wide degenerates to a single round pocket. Like every finger hole it is cut from the floor face down by its resolved pocket depth and is not clipped to the tool outline, so one line spans a row of tools.
 
 ## Z-Axis Reference Heights
 
@@ -30,6 +30,15 @@ MAGNET_SPACING = 26mm (centre-to-centre, 4 per cell)
 ## Half-grid support
 
 Bin dimensions accept 0.5-unit increments (e.g. 3.5x2.5 = 147x105mm). Half-unit trailing cells use 21mm base units. `half_grid_base` generates all base cells at 21mm for finer baseplate positioning. Magnets are placed only on full 42mm cells.
+
+## Custom mm sizes
+
+`size_mode` on `BinParams` selects how the footprint is defined:
+
+- `units` (default): `grid_x` / `grid_y` in gridfinity units, 1-10 in 0.5 steps. Outer size is `grid * 42 - 0.5mm`, keeping the gridfinity clearance so neighbouring bins share a baseplate.
+- `custom`: `custom_width_mm` / `custom_depth_mm` (42-1000mm) give the **exact** outer size -- no 0.5mm deduction, because these bins fill a drawer or shelf rather than tile a baseplate. `grid_x` / `grid_y` are derived as `mm / 42` and are no longer restricted to 1-10 or half steps; everything downstream (base cells, magnets, partial-bin mask, splitting, label cells) keeps working in those fractional units.
+
+`_outer_dims(config)` is the single place that resolves the footprint. Base feet, magnets and the partial-bin mask stay on the 42mm cell grid; the trailing partial cell in each direction absorbs the remainder, and a remainder thinner than `MIN_BASE_CELL_MM` (14mm) is folded into the cell before it, because a narrower base unit's tapered profile inverts. Auto-size is disabled for custom bins -- the size is user-declared.
 
 ## Partial bins
 
@@ -94,8 +103,22 @@ grid_units = ceil((tool_dimension + 2*wall + 2*clearance + 0.5) / 42)
 
 Large bins are split along grid boundaries using manifold3d `split_by_plane`. Diagonal fit check: `(W + H) / sqrt(2) <= bed_size`. Split parts exported as ZIP.
 
+Each axis is cut into as many slabs as the bed needs (`_compute_split_points`, half-grid granularity), so the result is an N x M field of parts -- a 420mm bin on a 150mm bed becomes 9. `_split_along_axis` walks the cuts low to high and keeps the slab below each one, carrying the part above it into the next iteration.
+
+Parts are written column-major: all rows of the lowest x column first, each axis counted from its low end, so a part's index is `col * rows + row`. `export_split_parts` returns that shape alongside the paths as a `SplitParts`, and `GenerateResponse.split_cols` / `split_rows` carry it to the frontend. `cols` and `rows` are `0` when there is no field to describe: no split, separated partial-bin islands (which keep their own positions and form no grid), or a cut that dropped an empty slab and left a hole.
+
+Only the export knows which of those happened, and an island count can coincide with a field size, so the field cannot be re-derived from the config and the part count. On a cache hit it comes back from the second line of the `.hash` file. A hash file written before that line existed reports no field, which is safe.
+
+`split_field` computes the same shape *without* cutting, but only for the pre-generation part-count guard. It mirrors the diagonal-fit gate, so it agrees with `split_bin` about when nothing is cut at all.
+
+`bed_size` is validated to 0 (no splitting) or 50-1000mm, and the part count is capped at `MAX_SPLIT_PARTS` (36). Individually legal values can still combine into hundreds of pieces, and each one costs an STL on disk, so the route refuses before generating rather than after writing them all.
+
 With partial bins in cut mode, separated islands are exported via `decompose` instead of plane cuts when connect mode is off. With connect mode on, bed splitting measures against the full grid size. See **Partial bins** above.
 
 ## 3MF Export
 
-Embossed text labels produce a separate body for multi-colour printing. Both bin body and text body are exported as separate objects in the 3MF. Uses trimesh for export. Only generated when embossed labels exist.
+A 3MF is written for every generated bin. Unlike STL it carries the unit (mm), so CAD tools import it at the right scale. It always holds the whole bin: bed-split parts and separated partial-bin islands are exported as STL only, so a bin that does not fit the bed has no 3MF of the pieces you actually print.
+
+When the export fails (usually a missing trimesh dependency -- see `networkx` in `backend/requirements.txt`), the file is absent and the generate route returns a warning rather than silently hiding the download.
+
+Embossed text labels produce a separate body for multi-colour printing; bin body and text body are then exported as separate objects in the same 3MF. Without labels the file holds the bin body alone. Uses trimesh for export.

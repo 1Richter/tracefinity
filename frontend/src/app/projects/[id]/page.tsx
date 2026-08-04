@@ -15,6 +15,7 @@ import {
   detachBinFromProject,
   removeToolFromProject,
   repairProject,
+  setProjectToolQuantity,
   updateProject,
 } from '@/lib/api'
 import type { BinConfig, BinProject, BinProjectSummary, BinSummary, ProjectHealthIssue, ProjectStatus, ToolSummary } from '@/types'
@@ -24,18 +25,25 @@ import { ConfirmModal } from '@/components/ConfirmModal'
 import { SectionHeader } from '@/components/SectionHeader'
 import { ToolSummaryButton, ToolSummaryItem } from '@/components/ToolSummaryItem'
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation'
-import { binDefaultsFromConfig, buildBinConfig, getDefaultBinConfig, getDefaultBinDefaults } from '@/lib/binDefaults'
+import { binDefaultsFromConfig, buildBinConfig, formatBinSize, getDefaultBinConfig, getDefaultBinDefaults } from '@/lib/binDefaults'
 import { projectScopedHref } from '@/lib/projectNavigation'
 import {
   binLabel,
+  clampToolQuantity,
+  expandToolIdsByQuantity,
   getUniqueBinTools,
   getProjectCollections,
   projectStatusLabels,
   projectNameMap,
+  toolPlacedCount,
+  toolPlacementLabel,
   toolProjectLabel,
+  toolQuantity,
+  MAX_TOOL_QUANTITY,
+  MIN_TOOL_QUANTITY,
   type ProjectToolFilter,
 } from '@/lib/projectSelectors'
-import { AlertTriangle, ArrowLeft, CheckSquare, ChevronDown, ChevronRight, Loader2, Package, Plus, Search, Square, Trash2, Unlink } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckSquare, ChevronDown, ChevronRight, Loader2, Minus, Package, Plus, Search, Square, Trash2, Unlink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/useTheme'
 
@@ -88,6 +96,7 @@ export default function ProjectPage() {
   const [projectDefaultsStatus, setProjectDefaultsStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savingQuantityToolId, setSavingQuantityToolId] = useState<string | null>(null)
   const [creatingBin, setCreatingBin] = useState(false)
   const { deleteTarget: deleteBinId, requestDelete: requestBinDelete, clearDelete: clearBinDelete } = useDeleteConfirmation<string>()
   const [error, setError] = useState<string | null>(null)
@@ -142,6 +151,14 @@ export default function ProjectPage() {
     allowReassignBins,
   }), [project, tools, bins, projectSearch, search, statusFilter, allowReassignBins])
   const projectNameById = useMemo(() => projectNameMap(projects), [projects])
+  const totalCopies = useMemo(
+    () => projectTools.reduce((sum, tool) => sum + toolQuantity(project, tool.id), 0),
+    [project, projectTools],
+  )
+  const binToolIds = useMemo(
+    () => expandToolIdsByQuantity(project, Array.from(selectedBinToolIds)),
+    [project, selectedBinToolIds],
+  )
 
   function toggleSelected(toolId: string) {
     setSelected(prev => {
@@ -293,14 +310,29 @@ export default function ProjectPage() {
     }
   }
 
+  async function handleQuantityChange(toolId: string, quantity: number) {
+    if (!project) return
+    const next = clampToolQuantity(quantity)
+    if (next === toolQuantity(project, toolId)) return
+    setSavingQuantityToolId(toolId)
+    setError(null)
+    try {
+      setProject(await setProjectToolQuantity(project.id, toolId, next))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'failed to update tool quantity')
+    } finally {
+      setSavingQuantityToolId(null)
+    }
+  }
+
   async function handleCreateBin() {
-    if (!project || selectedBinToolIds.size === 0) return
+    if (!project || binToolIds.length === 0) return
     setCreatingBin(true)
     setError(null)
     try {
       const bin = await createProjectBin(project.id, {
         name: `${project.name} bin ${projectBins.length + 1}`,
-        tool_ids: Array.from(selectedBinToolIds),
+        tool_ids: binToolIds,
         ...(project.default_bin_config ? {} : { bin_config: getDefaultBinDefaults() }),
       })
       router.push(projectScopedHref(project.id, `/bins/${bin.id}`))
@@ -407,6 +439,9 @@ export default function ProjectPage() {
           )}
           <div className="mt-2 flex items-center gap-3 text-[11px] text-text-muted">
             <span>{projectTools.length} tool{projectTools.length !== 1 ? 's' : ''}</span>
+            {totalCopies !== projectTools.length && (
+              <span>{totalCopies} cop{totalCopies !== 1 ? 'ies' : 'y'}</span>
+            )}
             <span>{projectBins.length} bin{projectBins.length !== 1 ? 's' : ''}</span>
             <span>{projectStatusLabels[project.status]}</span>
           </div>
@@ -423,11 +458,11 @@ export default function ProjectPage() {
           </select>
           <button
             onClick={handleCreateBin}
-            disabled={creatingBin || selectedBinToolIds.size === 0}
+            disabled={creatingBin || binToolIds.length === 0}
             className="btn-primary px-3 py-2 text-xs flex items-center gap-1.5"
           >
             {creatingBin ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
-            Create bin{selectedBinToolIds.size > 0 ? ` (${selectedBinToolIds.size})` : ''}
+            Create bin{binToolIds.length > 0 ? ` (${binToolIds.length})` : ''}
           </button>
         </div>
       </div>
@@ -544,7 +579,7 @@ export default function ProjectPage() {
                   {label}
                 </button>
               ))}
-              <span className="text-[11px] text-text-muted">{selectedBinToolIds.size} selected for bin</span>
+              <span className="text-[11px] text-text-muted">{binToolIds.length} selected for bin</span>
               <button
                 onClick={() => setSelectedBinToolIds(new Set(project.tool_ids))}
                 className="btn-secondary px-2 py-1 text-[11px]"
@@ -575,8 +610,20 @@ export default function ProjectPage() {
                 const isSelectedForBin = selectedBinToolIds.has(tool.id)
                 const projectLabel = toolProjectLabel(tool.project_ids, projectNameById)
                 const binsForTool = toolBins.get(tool.id) || []
+                const quantity = toolQuantity(project, tool.id)
+                const placementLabel = toolPlacementLabel(project, tool.id)
+                const fullyPlaced = toolPlacedCount(project, tool.id) >= quantity
+                const amberClass = theme === 'dark' ? 'text-amber-300' : 'text-amber-600'
                 const metadataItems = [
                   ...(projectLabel ? [{ key: 'project', label: projectLabel, title: projectLabel, className: 'text-text-secondary' }] : []),
+                  ...(quantity > 1
+                    ? [{
+                      key: 'placement',
+                      label: placementLabel,
+                      title: placementLabel,
+                      className: fullyPlaced ? 'text-text-secondary' : amberClass,
+                    }]
+                    : []),
                   ...(binsForTool.length > 0
                     ? binsForTool.slice(0, 2).map(bin => ({
                       key: bin.id,
@@ -584,7 +631,7 @@ export default function ProjectPage() {
                       title: binLabel(bin),
                       className: 'text-text-secondary',
                     }))
-                    : [{ key: 'needs-bin', label: 'Needs bin', title: 'Needs bin', className: theme === 'dark' ? 'text-amber-300' : 'text-amber-600' }]),
+                    : [{ key: 'needs-bin', label: 'Needs bin', title: 'Needs bin', className: amberClass }]),
                 ]
                 return (
                 <div key={tool.id} className="glass rounded-[8px] px-3 py-2 min-h-[72px] flex items-start justify-between gap-2">
@@ -616,14 +663,38 @@ export default function ProjectPage() {
                       </span>
                     </ToolSummaryItem>
                   </button>
-                  <button
-                    onClick={() => handleRemoveTool(tool.id)}
-                    disabled={saving}
-                    className="btn-danger-icon flex-shrink-0"
-                    title="Remove from project"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex flex-shrink-0 items-center gap-1">
+                    <div
+                      className="flex items-center rounded-[6px] border border-border-subtle"
+                      title={`How many of this tool the project needs (${placementLabel})`}
+                    >
+                      <button
+                        onClick={() => handleQuantityChange(tool.id, quantity - 1)}
+                        disabled={savingQuantityToolId === tool.id || quantity <= MIN_TOOL_QUANTITY}
+                        className="px-1 py-1 text-text-muted hover:text-accent disabled:opacity-40 transition-colors cursor-pointer"
+                        aria-label={`Fewer copies of ${tool.name}`}
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="min-w-[16px] text-center text-[11px] text-text-primary tabular-nums">{quantity}</span>
+                      <button
+                        onClick={() => handleQuantityChange(tool.id, quantity + 1)}
+                        disabled={savingQuantityToolId === tool.id || quantity >= MAX_TOOL_QUANTITY}
+                        className="px-1 py-1 text-text-muted hover:text-accent disabled:opacity-40 transition-colors cursor-pointer"
+                        aria-label={`More copies of ${tool.name}`}
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => handleRemoveTool(tool.id)}
+                      disabled={saving}
+                      className="btn-danger-icon"
+                      title="Remove from project"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 )
               })}
@@ -788,7 +859,7 @@ export default function ProjectPage() {
                       {selectedExisting ? <CheckSquare className="w-3.5 h-3.5 text-accent" /> : <Square className="w-3.5 h-3.5 text-text-muted" />}
                       <span className="min-w-0 flex-1">
                         <span className="block text-[11px] text-text-primary truncate">{binLabel(bin)}</span>
-                        <span className="block text-[10px] text-text-muted">{bin.grid_x}x{bin.grid_y} · {bin.tool_count} tool{bin.tool_count !== 1 ? 's' : ''}</span>
+                        <span className="block text-[10px] text-text-muted">{formatBinSize(bin)} · {bin.tool_count} tool{bin.tool_count !== 1 ? 's' : ''}</span>
                       </span>
                     </button>
                   )
@@ -827,7 +898,7 @@ export default function ProjectPage() {
                     >
                       <span className="min-w-0">
                         <span className="block text-xs text-text-primary truncate">{binLabel(bin)}</span>
-                        <span className="block text-[10px] text-text-muted">{bin.grid_x}x{bin.grid_y} · {bin.tool_count} tool{bin.tool_count !== 1 ? 's' : ''}</span>
+                        <span className="block text-[10px] text-text-muted">{formatBinSize(bin)} · {bin.tool_count} tool{bin.tool_count !== 1 ? 's' : ''}</span>
                       </span>
                     </button>
                     <div className="flex items-center gap-1 flex-shrink-0">

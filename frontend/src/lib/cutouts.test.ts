@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { MIN_CUTOUT_SIZE_MM, resizeRectCutout, resizeRoundCutout } from './cutouts'
+import {
+  MIN_CUTOUT_SIZE_MM,
+  cutoutShapeLabel,
+  isLineCutout,
+  isRectangularCutout,
+  resizeRectCutout,
+  resizeRoundCutout,
+  usesWidthHeight,
+} from './cutouts'
 
 // guards issue #114: rectangle cutouts must resize below 10mm
 describe('resizeRectCutout', () => {
@@ -60,5 +68,29 @@ describe('MIN_CUTOUT_SIZE_MM', () => {
   it('is well below the reported 10mm floor', () => {
     expect(MIN_CUTOUT_SIZE_MM).toBeLessThanOrEqual(5)
     expect(MIN_CUTOUT_SIZE_MM).toBeGreaterThan(0)
+  })
+})
+
+// the parametric cutout line: a trench sized by length x width, not a radius
+describe('cutout lines', () => {
+  it('is measured by width and height like a rectangle', () => {
+    expect(usesWidthHeight('line')).toBe(true)
+    expect(usesWidthHeight('rectangle')).toBe(true)
+    expect(usesWidthHeight('circle')).toBe(false)
+  })
+
+  it('is not treated as a rectangle for the filleted-bottom profile', () => {
+    expect(isLineCutout('line')).toBe(true)
+    expect(isRectangularCutout('line')).toBe(false)
+  })
+
+  it('has a readable label', () => {
+    expect(cutoutShapeLabel('line')).toBe('cutout line')
+  })
+
+  it('resizes with the shared rectangle helper', () => {
+    const r = resizeRectCutout(0, 0, 120, 8, 0)
+    expect(r.width).toBeCloseTo(120)
+    expect(r.height).toBeCloseTo(8)
   })
 })

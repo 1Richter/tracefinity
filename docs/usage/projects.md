@@ -29,13 +29,19 @@ Tools can belong to multiple projects.
 
 Click the delete icon next to a tool in the **Project tools** section to remove it from the project. This does not delete the tool itself.
 
+## Tool quantities
+
+Use the **−/+** counter on a tool card to plan for more than one of the same tool -- three identical socket wrenches, for example. The card then tracks progress as "2/3 placed", counting how many copies sit in the project's linked bins.
+
+A tool only counts as placed once every planned copy is in a bin, so the **Unplaced** filter and the dashboard's "need bin" count keep showing it until you are done.
+
 ## Filtering project tools
 
 The project tools list has filter buttons:
 
 - **All** shows every tool in the project.
-- **Unplaced** shows tools not yet placed in any bin.
-- **Placed** shows tools already assigned to a bin.
+- **Unplaced** shows tools with copies not yet placed in any bin.
+- **Placed** shows tools whose every copy is already assigned to a bin.
 
 A search field filters by name within the current filter.
 
@@ -45,6 +51,8 @@ A search field filters by name within the current filter.
 2. Click **Create bin** in the project header.
 
 The bin is created with the project's default configuration (if set) and opens in the bin editor. The bin is automatically linked to the project.
+
+Tools with a quantity above 1 are placed once per copy, each copy offset slightly so they do not sit on top of each other. The button count shows copies, not distinct tools.
 
 ## Default bin settings
 

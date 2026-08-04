@@ -12,12 +12,13 @@ export interface FingerHole {
   radius: number
   rotation?: number
   shape?: CutoutShape
+  // for rectangles; length along the axis and trench width for lines
   width?: number
   height?: number
   depth_override?: number | null
 }
 
-export type CutoutShape = 'circle' | 'cylinder' | 'square' | 'rectangle' | 'filleted_rectangle'
+export type CutoutShape = 'circle' | 'cylinder' | 'square' | 'rectangle' | 'filleted_rectangle' | 'line'
 
 export interface Polygon {
   id: string
@@ -101,14 +102,24 @@ export interface GenerateResponse {
   stl_urls?: string[]
   threemf_url?: string
   split_count?: number
+  /** field the parts were cut into; both 0 when there is no regular one */
+  split_cols?: number
+  split_rows?: number
   zip_url?: string | null
   insert_stl_url?: string | null
   warning?: string | null
 }
 
+// 'units' sizes the bin in gridfinity units, 'custom' in exact outer mm
+export type BinSizeMode = 'units' | 'custom'
+
 export interface BinDefaults {
   grid_x: number
   grid_y: number
+  size_mode: BinSizeMode
+  // set in custom mode only; grid_x/grid_y are then derived from them
+  custom_width_mm: number | null
+  custom_depth_mm: number | null
   height_units: number
   magnets: boolean
   magnet_diameter: number
@@ -208,8 +219,12 @@ export interface BinProject {
   status: ProjectStatus
   tool_ids: string[]
   bin_ids: string[]
+  // planned copies per tool; a tool missing from the map means 1
+  tool_quantities: Record<string, number>
   placed_tool_ids: string[]
   unplaced_tool_ids: string[]
+  // placements found across the project's linked bins, per tool
+  placed_counts: Record<string, number>
   target_grid_x: number | null
   target_grid_y: number | null
   default_bin_config: BinDefaults | null
@@ -225,6 +240,7 @@ export interface BinProjectSummary {
   status: ProjectStatus
   tool_count: number
   bin_count: number
+  total_quantity: number
   placed_count: number
   unplaced_count: number
   target_grid_x: number | null
@@ -260,6 +276,10 @@ export interface PlacedTool {
   interior_rings: Point[][]
   rotation: number
   depth_override?: number | null
+  // cutouts edited in the bin editor: library holes kept as edited here, and
+  // library holes deleted from this placement (see bin_service.sync_placed_tools)
+  custom_hole_ids?: string[]
+  removed_hole_ids?: string[]
 }
 
 export interface BinData {
@@ -288,5 +308,8 @@ export interface BinSummary {
   has_stl: boolean
   grid_x: number
   grid_y: number
+  size_mode: BinSizeMode
+  custom_width_mm: number | null
+  custom_depth_mm: number | null
   preview_tools: BinPreviewTool[]
 }

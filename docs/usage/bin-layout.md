@@ -20,9 +20,27 @@ Snap is off by default (5mm grid when enabled). Toggle it with the **Snap** butt
 
 When a tool is selected, a rotation handle appears. Drag it to rotate freely.
 
+## Duplicating tools
+
+With a tool selected, press Ctrl/Cmd+C then Ctrl/Cmd+V, press Ctrl/Cmd+D, or click the copy button in the toolbar. The copy is an independent placement offset 5mm from the original -- moving, rotating or re-cutting it leaves the original alone. Pasting repeatedly cascades the copies instead of stacking them in one spot.
+
 ## Per-tool cutout depth
 
 Select a tool to see a **Depth** field in the toolbar. Leave it blank to use the bin's default cutout depth. Enter a value to override it for that tool only. Click the reset button to clear the override.
+
+The **max** value next to the field is the deepest pocket the current bin height allows -- anything deeper would break through the bin floor. Entering more clamps to that maximum and the hint turns amber. The same field and cap apply to a selected cutout.
+
+## Editing cutouts in the bin
+
+Cutouts of a placed tool can be edited without leaving the bin, and the changes apply to that placement only -- the library tool and every other bin keep the original cutouts.
+
+- Pick a cutout shape in the floating toolbar (circle, cylinder, square, rectangle, filleted rectangle) and click a placed tool to add one. Escape returns to Select.
+- In Select mode, drag a cutout to move it. When it is selected, drag the round handle to resize, and the handle above it (rectangles and squares) to rotate.
+- **Depth** in the toolbar overrides the pocket depth for that cutout.
+- The trash button, or the Delete key, removes the selected cutout from this placement.
+
+Edits made here survive reloads: the bin remembers which cutouts were changed or removed, so later edits to the library tool no longer overwrite them. Untouched cutouts still follow the library tool.
+
 
 ## Text labels
 
@@ -71,6 +89,7 @@ The sidebar controls all bin parameters:
 | Setting | Description |
 |-|-|
 | Grid Width / Depth | Bin size in gridfinity units (42mm each). 1-10. |
+| Custom size (mm) | Size the bin in exact outer millimetres (42-1000mm) instead of gridfinity units, so it fills a drawer or shelf. Base feet and magnets stay on the 42mm grid; auto-size is disabled. |
 | Height | Bin height in units (7mm each + 4.75mm base). |
 | Cutout Depth | How deep tool pockets are cut. |
 | Clearance | Extra space around tool outlines. |

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 from app.auth import get_user_id
 from app.config import ensure_user_dirs, settings
-from app.constants import GF_GRID
+from app.constants import DUPLICATE_OFFSET_MM, GF_GRID
 from app.models.schemas import (
     BinConfig,
     BinDefaults,
@@ -32,6 +33,7 @@ from app.models.schemas import (
     BinProjectCreateRequest,
     BinProjectDetail,
     BinProjectListResponse,
+    BinProjectToolQuantityRequest,
     BinProjectToolsRequest,
     BinProjectUpdateRequest,
     BinSummary,
@@ -75,6 +77,7 @@ from app.services.polygon_scaler import PolygonScaler, ScaledFingerHole, ScaledP
 from app.services.project_service import (
     add_bin_to_project,
     add_project_to_tools,
+    expand_tool_ids,
     health_response,
     make_project_detail,
     make_project_summary,
@@ -188,6 +191,20 @@ def _get_tracer(tracer_id: str | None = None) -> AITracer:
 
 polygon_scaler = PolygonScaler()
 stl_generator = ManifoldSTLGenerator()
+
+# reported through GenerateResponse.warning from both the fresh and the cached
+# path, so the user learns why a download is missing rather than just not
+# seeing the button
+INSERT_FAILED_WARNING = (
+    "Insert generation failed. Try re-tracing the tools or adjusting their placement."
+)
+THREEMF_FAILED_WARNING = "3MF export failed, so only the STL is available. Check the server log."
+
+
+def _add_warning(existing: str | None, message: str) -> str:
+    """GenerateResponse carries one warning string, so a second cause joins the
+    first rather than replacing it or going unreported."""
+    return message if existing is None else f"{existing} {message}"
 
 
 def _rel(abs_path: str | Path, user_path: Path) -> str:
@@ -352,20 +369,28 @@ def _build_bin_from_tools(
 ) -> BinModel:
     placed: list[PlacedTool] = []
     all_points_mm: list[tuple[float, float]] = []
+    copies_placed: dict[str, int] = {}
 
     for tool_id in tool_ids:
         tool = user_tools.get(tool_id)
         if not tool:
             raise HTTPException(status_code=404, detail=f"tool {tool_id} not found")
 
-        all_points_mm.extend([(p.x, p.y) for p in tool.points])
+        # repeated tool ids are extra copies; stagger them so they do not
+        # land exactly on top of each other
+        copy_index = copies_placed.get(tool_id, 0)
+        copies_placed[tool_id] = copy_index + 1
+        offset = copy_index * DUPLICATE_OFFSET_MM
+
+        points = _translate_points(tool.points, offset, offset)
+        all_points_mm.extend([(p.x, p.y) for p in points])
         placed.append(PlacedTool(
             id=str(uuid.uuid4()),
             tool_id=tool_id,
             name=tool.name,
-            points=list(tool.points),
-            finger_holes=list(tool.finger_holes),
-            interior_rings=list(tool.interior_rings),
+            points=points,
+            finger_holes=_translate_finger_holes(tool.finger_holes, offset, offset),
+            interior_rings=[_translate_points(ring, offset, offset) for ring in tool.interior_rings],
         ))
 
     bc = BinConfig(**default_config.model_dump(exclude={"text_labels"}), text_labels=[]) if default_config else BinConfig()
@@ -380,17 +405,20 @@ def _build_bin_from_tools(
         needed_w = tool_width + 2 * clearance + 2 * wall + 0.5
         needed_h = tool_height + 2 * clearance + 2 * wall + 0.5
 
-        # snap to 0.5 units when half-grid is on, whole units otherwise
-        if bc.half_grid_base:
-            half = GF_GRID / 2
-            grid_x = max(1.0, math.ceil(needed_w / half) * 0.5)
-            grid_y = max(1.0, math.ceil(needed_h / half) * 0.5)
-        else:
-            grid_x = max(1.0, math.ceil(needed_w / GF_GRID))
-            grid_y = max(1.0, math.ceil(needed_h / GF_GRID))
-        bc.grid_x = min(grid_x, 10.0)
-        bc.grid_y = min(grid_y, 10.0)
-        bc.partial_bins_values = [True] * (math.ceil(bc.grid_x) * math.ceil(bc.grid_y))
+        # custom mm bins keep the size the user asked for; only the tool
+        # placement below is adjusted to it
+        if bc.size_mode != "custom":
+            # snap to 0.5 units when half-grid is on, whole units otherwise
+            if bc.half_grid_base:
+                half = GF_GRID / 2
+                grid_x = max(1.0, math.ceil(needed_w / half) * 0.5)
+                grid_y = max(1.0, math.ceil(needed_h / half) * 0.5)
+            else:
+                grid_x = max(1.0, math.ceil(needed_w / GF_GRID))
+                grid_y = max(1.0, math.ceil(needed_h / GF_GRID))
+            bc.grid_x = min(grid_x, 10.0)
+            bc.grid_y = min(grid_y, 10.0)
+            bc.partial_bins_values = [True] * (math.ceil(bc.grid_x) * math.ceil(bc.grid_y))
 
         bin_w = bc.grid_x * GF_GRID
         bin_h = bc.grid_y * GF_GRID
@@ -413,6 +441,43 @@ def _build_bin_from_tools(
     )
 
 
+def _write_hash(hash_path: Path, input_hash: str, cols: int, rows: int) -> None:
+    """Record the input hash plus the field the parts were cut in.
+
+    The field cannot be re-derived on a cache hit: only the export knows
+    whether it cut slabs or decomposed a partial bin into islands, and the two
+    can produce the same number of files. Store it next to the hash instead.
+    """
+    hash_path.write_text(f"{input_hash}\n{cols} {rows}")
+
+
+def _read_hash(hash_path: Path) -> tuple[str, int, int]:
+    """Input hash and cut field from a hash file. A file written before the
+    field was recorded reports no field, so the preview falls back to a row."""
+    lines = hash_path.read_text().splitlines()
+    if not lines:
+        return ("", 0, 0)
+    try:
+        cols, rows = (int(n) for n in lines[1].split())
+    except (IndexError, ValueError):
+        cols = rows = 0
+    return (lines[0], cols, rows)
+
+
+def _sorted_part_paths(user_path: Path, entity_id: str) -> list[Path]:
+    """Exported parts in the order they were written.
+
+    Sorted by the trailing index rather than lexically: parts are zero-padded
+    now, but a bin generated before that still has _part10 sorting ahead of
+    _part2 on disk.
+    """
+    def index(path: Path) -> int:
+        digits = path.stem.rsplit("_part", 1)[-1]
+        return int(digits) if digits.isdigit() else 0
+
+    return sorted(user_path.glob(f"outputs/{entity_id}_part*.stl"), key=index)
+
+
 def _run_generate(
     scaled: list[ScaledPolygon],
     gen_req: GenerateRequest,
@@ -426,14 +491,31 @@ def _run_generate(
     # in-flight guard: the request captured its store before any awaits or
     # threadpool hops; refuse to write outputs once the user is deleted
     store.ensure_open()
+
+    # a legal bed and a legal grid can still ask for an unreasonable number of
+    # pieces, each of which costs an STL on disk. Refuse before generating
+    # rather than after writing them all.
+    planned_cols, planned_rows = stl_generator.split_field(gen_req, gen_req.bed_size)
+    if planned_cols * planned_rows > stl_generator.MAX_SPLIT_PARTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"this bin would split into {planned_cols * planned_rows} parts on a "
+                f"{gen_req.bed_size:.0f}mm bed. Use a larger bed size or a smaller bin."
+            ),
+        )
+
     output_path = user_path / "outputs" / f"{entity_id}.stl"
     hash_path = user_path / "outputs" / f"{entity_id}.hash"
     threemf_path = user_path / "outputs" / f"{entity_id}.3mf"
     zip_path = user_path / "outputs" / f"{entity_id}_parts.zip"
     insert_path = user_path / "outputs" / f"{entity_id}_insert.stl"
 
-    if output_path.exists() and hash_path.exists() and hash_path.read_text() == input_hash:
-        part_paths = sorted(user_path.glob(f"outputs/{entity_id}_part*.stl"))
+    cached_hash, cached_cols, cached_rows = (
+        _read_hash(hash_path) if hash_path.exists() else ("", 0, 0)
+    )
+    if output_path.exists() and cached_hash == input_hash:
+        part_paths = _sorted_part_paths(user_path, entity_id)
         stl_urls = [f"/storage/{user_id}/outputs/{p.name}" for p in part_paths]
         insert_stl_url = (
             f"/storage/{user_id}/outputs/{entity_id}_insert.stl"
@@ -441,12 +523,19 @@ def _run_generate(
         )
         cached_warning = None
         if getattr(gen_req, 'insert_enabled', False) and not insert_path.exists():
-            cached_warning = "Insert generation failed. Try re-tracing the tools or adjusting their placement."
+            cached_warning = _add_warning(cached_warning, INSERT_FAILED_WARNING)
+        if not threemf_path.exists():
+            # the hash is written even when the 3MF export failed, so without
+            # this the second request for the same config -- the one a user is
+            # most likely to make -- drops the download again in silence
+            cached_warning = _add_warning(cached_warning, THREEMF_FAILED_WARNING)
         return GenerateResponse(
             stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",
             stl_urls=stl_urls,
             threemf_url=f"/storage/{user_id}/outputs/{entity_id}.3mf" if threemf_path.exists() else None,
             split_count=max(1, len(stl_urls)),
+            split_cols=cached_cols,
+            split_rows=cached_rows,
             zip_url=f"/storage/{user_id}/outputs/{entity_id}_parts.zip" if zip_path.exists() else None,
             insert_stl_url=insert_stl_url,
             warning=cached_warning,
@@ -454,6 +543,8 @@ def _run_generate(
 
     threemf_path.unlink(missing_ok=True)
     for old in user_path.glob(f"outputs/{entity_id}_part*.stl"):
+        old.unlink(missing_ok=True)
+    for old in user_path.glob(f"outputs/{entity_id}_part*.3mf"):
         old.unlink(missing_ok=True)
     zip_path.unlink(missing_ok=True)
     insert_path.unlink(missing_ok=True)
@@ -463,12 +554,18 @@ def _run_generate(
     stl_urls: list[str] = []
     zip_url = None
     output_dir = str(user_path / "outputs")
-    part_paths = stl_generator.export_split_parts(
+    split = stl_generator.export_split_parts(
         bin_body, text_body, gen_req, gen_req.bed_size, output_dir, entity_id
     )
+    part_paths = split.paths
     if part_paths:
         stl_urls = [f"/storage/{user_id}/outputs/{Path(p).name}" for p in part_paths]
-        part_bytes = [(Path(p).name, Path(p).read_bytes()) for p in part_paths]
+        # split_bin/export_separated_parts also write a same-named .3mf next to
+        # each part's .stl (best-effort); bundle whichever landed so a split
+        # bin's 3MF download is the split pieces, not the pre-cut whole bin
+        part_3mf_paths = sorted(user_path.glob(f"outputs/{entity_id}_part*.3mf"))
+        part_paths_all = list(part_paths) + part_3mf_paths
+        part_bytes = [(Path(p).name, Path(p).read_bytes()) for p in part_paths_all]
         with zipfile.ZipFile(str(zip_path), 'w', zipfile.ZIP_DEFLATED) as zf:
             for fname, data in part_bytes:
                 zf.writestr(fname, data)
@@ -497,19 +594,25 @@ def _run_generate(
                     zf.write(str(insert_path), f"{entity_id}_insert.stl")
                 zip_url = f"/storage/{user_id}/outputs/{entity_id}_parts.zip"
         else:
-            warning = "Insert generation failed. Try re-tracing the tools or adjusting their placement."
+            warning = INSERT_FAILED_WARNING
 
-    hash_path.write_text(input_hash)
+    _write_hash(hash_path, input_hash, split.cols, split.rows)
 
     threemf_url = None
     if threemf_path.exists():
         threemf_url = f"/storage/{user_id}/outputs/{entity_id}.3mf"
+    else:
+        # the 3MF is written for every bin, so a missing one means the export
+        # failed. Say so instead of just dropping the button from the menu.
+        warning = _add_warning(warning, THREEMF_FAILED_WARNING)
 
     return GenerateResponse(
         stl_url=f"/storage/{user_id}/outputs/{entity_id}.stl",
         stl_urls=stl_urls,
         threemf_url=threemf_url,
         split_count=max(1, len(stl_urls)),
+        split_cols=split.cols,
+        split_rows=split.rows,
         zip_url=zip_url,
         insert_stl_url=insert_stl_url,
         warning=warning,
@@ -544,7 +647,9 @@ async def upload_image(request: Request, image: UploadFile, user_id: str = Depen
     user_sessions.ensure_open()
     image_path.write_bytes(content)
 
-    corners = image_processor.detect_paper_corners(str(image_path))
+    # U2-Net loads lazily and unloads when idle, so this can cost a model load
+    # on top of the detection itself; neither belongs on the event loop
+    corners = await asyncio.to_thread(image_processor.detect_paper_corners, str(image_path))
     corner_points = [Point(x=c[0], y=c[1]) for c in corners] if corners else None
 
     user_sessions.set(session_id, Session(
@@ -1344,11 +1449,39 @@ async def remove_tool_from_bin_project(
 
     if tool_id in project.tool_ids:
         project.tool_ids = [tid for tid in project.tool_ids if tid != tool_id]
+        project.tool_quantities.pop(tool_id, None)
         project.updated_at = _now_iso()
         project_store.set(project_id, project)
 
     _, user_tools, user_bins = get_stores(user_id)
     remove_project_from_tools(project_id, [tool_id], user_tools)
+    return make_project_detail(project, user_bins)
+
+
+@router.patch("/bin-projects/{project_id}/tools/{tool_id}", response_model=BinProjectDetail)
+async def set_bin_project_tool_quantity(
+    request: Request,
+    project_id: str,
+    tool_id: str,
+    req: BinProjectToolQuantityRequest,
+    user_id: str = Depends(get_user_id),
+):
+    project_store = get_project_store(user_id)
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    if tool_id not in project.tool_ids:
+        raise HTTPException(status_code=404, detail=f"tool {tool_id} not in project")
+
+    # quantity 1 is the default, so it is stored as the absence of an entry
+    if req.quantity == 1:
+        project.tool_quantities.pop(tool_id, None)
+    else:
+        project.tool_quantities[tool_id] = req.quantity
+    project.updated_at = _now_iso()
+    project_store.set(project_id, project)
+
+    _, _, user_bins = get_stores(user_id)
     return make_project_detail(project, user_bins)
 
 
@@ -1458,7 +1591,9 @@ async def create_bin_from_project(
         raise HTTPException(status_code=404, detail="project not found")
 
     _, user_tools, user_bins = get_stores(user_id)
-    tool_ids = project.tool_ids if req.tool_ids is None else req.tool_ids
+    # an explicit list already carries its own repeats; the project-wide
+    # default expands each tool to the number of copies the project plans for
+    tool_ids = expand_tool_ids(project, project.tool_ids) if req.tool_ids is None else req.tool_ids
     outside_project = [tid for tid in tool_ids if tid not in project.tool_ids]
     if outside_project:
         raise HTTPException(status_code=400, detail="all tools must belong to project")
@@ -1495,6 +1630,9 @@ async def list_bins(request: Request, user_id: str = Depends(get_user_id)):
             has_stl=bin_data.stl_path is not None,
             grid_x=bin_data.bin_config.grid_x,
             grid_y=bin_data.bin_config.grid_y,
+            size_mode=bin_data.bin_config.size_mode,
+            custom_width_mm=bin_data.bin_config.custom_width_mm,
+            custom_depth_mm=bin_data.bin_config.custom_depth_mm,
             preview_tools=[BinPreviewTool(points=pt.points, interior_rings=pt.interior_rings) for pt in bin_data.placed_tools],
         ))
     summaries.sort(key=lambda b: b.created_at or "", reverse=True)
@@ -1643,6 +1781,9 @@ def generate_bin_stl(request: Request, bin_id: str, user_id: str = Depends(get_u
     gen_req = GenerateRequest(
         grid_x=bc.grid_x,
         grid_y=bc.grid_y,
+        size_mode=bc.size_mode,
+        custom_width_mm=bc.custom_width_mm,
+        custom_depth_mm=bc.custom_depth_mm,
         height_units=bc.height_units,
         magnets=bc.magnets,
         magnet_diameter=bc.magnet_diameter,
@@ -1682,9 +1823,11 @@ def _bin_stem(bin_data) -> str:
     bc = bin_data.bin_config
     raw = (bin_data.name or "bin").strip()
     safe = re.sub(r"[^\w\-]", "_", raw).strip("_") or "bin"
-    gx = f"{bc.grid_x:g}"
-    gy = f"{bc.grid_y:g}"
-    return f"{safe}_{gx}u{gy}u{bc.height_units}u_{int(bc.cutout_depth)}mm-tracefinity"
+    if bc.size_mode == "custom":
+        size = f"{bc.custom_width_mm:g}x{bc.custom_depth_mm:g}mm_"
+    else:
+        size = f"{bc.grid_x:g}u{bc.grid_y:g}u"
+    return f"{safe}_{size}{bc.height_units}u_{int(bc.cutout_depth)}mm-tracefinity"
 
 
 # bin file downloads

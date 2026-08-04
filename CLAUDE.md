@@ -41,6 +41,18 @@ make lint-fix       # auto-fix where possible
 
 Backend: ruff, configured in `pyproject.toml` (rules E/F/W/I, ignores E402/E501). Frontend: eslint (flat config in `frontend/eslint.config.mjs`) + `tsc --noEmit`. CI runs on PRs and pushes to main (`.github/workflows/lint.yml`).
 
+## Testing
+
+```bash
+make test           # backend pytest + frontend vitest
+make test-backend   # pytest only
+make test-frontend  # vitest only
+```
+
+CI runs both unit suites on PRs and pushes to main (`.github/workflows/tests.yml`).
+
+`make test-e2e` runs the playwright suite. It needs a running app, is not part of `make test`, and does not run in CI.
+
 ## Principles
 
 - Coordinate systems differ across layers (see docs/gotchas.md). SVG/layout Y is down; manifold3d Y is up. Always negate Y when crossing that boundary.
@@ -63,7 +75,7 @@ Before creating issues/PRs or accepting contributions, check:
 
 Configurable via `GEMINI_IMAGE_MODEL` env var. Defaults to `gemini-3.1-flash-image-preview` locally, `gemini-3-pro-image-preview` in Docker. Also supports `gemini-2.5-flash-image` (faster, needs alignment).
 
-Two models run at all times: U2-Net Portable for paper detection and the configured tracer for tool tracing. Both load at startup. RAM figures are combined (tested in Linux containers). All local models require ONNX Runtime, which needs AVX CPU instructions. On non-AVX CPUs, U2-Net is skipped (paper detection falls back to OpenCV-only) and local tracers are unavailable -- use a remote tracer instead.
+Two models are involved: U2-Net Portable for paper detection and the configured tracer for tool tracing. Both load on first use and unload again after `MODEL_IDLE_TIMEOUT_SECONDS` (default 300, `0` keeps them resident). RAM figures are combined and describe both models loaded (tested in Linux containers). All local models require ONNX Runtime, which needs AVX CPU instructions. On non-AVX CPUs, U2-Net is skipped (paper detection falls back to OpenCV-only) and local tracers are unavailable -- use a remote tracer instead.
 
 Tracers (configurable via `TRACERS` env var):
 - `isnet` (default) -- IS-Net, good quality, ~0.8s/image, min 2GB

@@ -11,6 +11,14 @@ SVG/layout/bin-space is Y-down (0 = top edge). build123d is Y-up. Always negate 
 - BinPreview3D.tsx: rotation `[-PI/2, 0, 0]` converts Z-up to Y-up. Do NOT add `scale [1, -1, 1]` -- that was a compensating hack for un-flipped Y
 - All three must match: layout editor, 3D preview, downloaded STL in slicer
 
+## Half cells of fractional grids
+
+A grid like 3.5 x 2.5 has one partial (21mm) cell per fractional axis. Canonical placement follows the bin editor, which draws its grid from the top-left corner: **the partial cell is the right-hand column and the bottom row**. Because manifold +y is the editor's top edge, the backend builds the y axis with the partial cell first (`_base_cell_layout(..., partial_first=True)` via `_cell_layout_xy`), x unchanged.
+
+- Anything that maps a cell index to geometry goes through `_cell_bounds` / `_cell_center` -- partial cells are narrower than 42mm, so cutters and stability plates must use the real span, not `GF_GRID`
+- `partial_bins_values` stays row-major with row 0 = the editor's top row (`_partial_cell_index`), so the partial row is the **last** row of the matrix
+- `BinEditorCanvas.tsx` rounds the cell counts up (`Math.ceil`) and clips the last cell of each axis to the bin
+
 ## Cutout pipeline order
 
 Smoothing/simplification runs BEFORE clearance (`prepare_for_generation`), never after -- vertex reduction erodes the outline by up to its tolerance and must not eat the clearance. The printed pocket is the previewed shape grown by exactly the clearance. The smoothing epsilon is absolute mm (`smooth_epsilon`), duplicated in `lib/svg.ts smoothEpsilon` -- change both together or preview and print diverge.

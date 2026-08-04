@@ -14,7 +14,7 @@ Open the editor by clicking a tool in your library. The toolbar controls what ha
 
 ## Cutouts
 
-The cutout dropdown provides five pocket types. Click on the canvas to place one.
+The cutout dropdown provides the pocket types below. Click on the canvas to place one.
 
 | Type | Default size | Shape |
 |-|-|-|
@@ -23,6 +23,8 @@ The cutout dropdown provides five pocket types. Click on the canvas to place one
 | Cylinder | 10mm radius | Flat-bottomed circular pocket |
 | Square | 20mm side | Square pocket |
 | Rectangle | 30 x 20mm | Rectangular pocket |
+| Filleted rectangle | 30 x 20mm | Rectangular pocket with a rounded bottom |
+| Cutout line | 60 x 8mm | Straight trench with rounded ends |
 
 Once placed:
 
@@ -31,6 +33,8 @@ Once placed:
 - Rotation handle on rectangular cutouts.
 - Per-hole depth override (overrides the bin's cutout depth for this hole only).
 - Select a hole and click Delete to remove it.
+
+A **cutout line** is parametric: selecting it shows Length, Width and Rotation fields in the Selection panel, so it can be set to an exact size. It is not clipped to the tool outline, so one line can run across a whole row of tools (a set of screwdrivers or wrenches) as a single continuous channel instead of one pocket per tool.
 
 ## Smooth vs Accurate
 

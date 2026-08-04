@@ -28,7 +28,20 @@ def project_linked_bins(project: BinProject, user_bins: BinStore) -> list[BinMod
     return linked
 
 
-def project_status(project: BinProject, linked_bins: list[BinModel]) -> dict[str, list[str]]:
+def tool_quantity(project: BinProject, tool_id: str) -> int:
+    """planned copies of a tool; tools absent from the map count as one"""
+    return project.tool_quantities.get(tool_id, 1)
+
+
+def expand_tool_ids(project: BinProject, tool_ids: list[str]) -> list[str]:
+    """repeat each tool id as many times as the project plans copies of it"""
+    expanded: list[str] = []
+    for tool_id in tool_ids:
+        expanded.extend([tool_id] * tool_quantity(project, tool_id))
+    return expanded
+
+
+def project_status(project: BinProject, linked_bins: list[BinModel]) -> dict:
     project_tool_ids = list(dict.fromkeys(project.tool_ids))
     project_tool_set = set(project_tool_ids)
     placement_counts: dict[str, int] = {}
@@ -37,17 +50,41 @@ def project_status(project: BinProject, linked_bins: list[BinModel]) -> dict[str
             if placed.tool_id in project_tool_set:
                 placement_counts[placed.tool_id] = placement_counts.get(placed.tool_id, 0) + 1
 
-    placed = [tool_id for tool_id in project_tool_ids if placement_counts.get(tool_id, 0) > 0]
-    unplaced = [tool_id for tool_id in project_tool_ids if placement_counts.get(tool_id, 0) == 0]
+    # a tool counts as placed once every planned copy sits in a linked bin
+    placed = [
+        tool_id for tool_id in project_tool_ids
+        if placement_counts.get(tool_id, 0) >= tool_quantity(project, tool_id)
+    ]
+    unplaced = [
+        tool_id for tool_id in project_tool_ids
+        if placement_counts.get(tool_id, 0) < tool_quantity(project, tool_id)
+    ]
     return {
         "placed_tool_ids": placed,
         "unplaced_tool_ids": unplaced,
+        "placed_counts": {
+            tool_id: placement_counts[tool_id]
+            for tool_id in project_tool_ids
+            if placement_counts.get(tool_id, 0) > 0
+        },
     }
+
+
+def project_unit_counts(project: BinProject, status: dict) -> tuple[int, int, int]:
+    """(total, placed, unplaced) counted in copies rather than distinct tools"""
+    total = 0
+    placed = 0
+    for tool_id in dict.fromkeys(project.tool_ids):
+        quantity = tool_quantity(project, tool_id)
+        total += quantity
+        placed += min(status["placed_counts"].get(tool_id, 0), quantity)
+    return total, placed, total - placed
 
 
 def make_project_summary(project: BinProject, user_bins: BinStore) -> BinProjectSummary:
     linked_bins = project_linked_bins(project, user_bins)
     status = project_status(project, linked_bins)
+    total, placed, unplaced = project_unit_counts(project, status)
     return BinProjectSummary(
         id=project.id,
         name=project.name,
@@ -55,8 +92,9 @@ def make_project_summary(project: BinProject, user_bins: BinStore) -> BinProject
         status=project.status,
         tool_count=len(project.tool_ids),
         bin_count=len(linked_bins),
-        placed_count=len(status["placed_tool_ids"]),
-        unplaced_count=len(status["unplaced_tool_ids"]),
+        total_quantity=total,
+        placed_count=placed,
+        unplaced_count=unplaced,
         target_grid_x=project.target_grid_x,
         target_grid_y=project.target_grid_y,
         created_at=project.created_at,
@@ -233,6 +271,10 @@ def repair_project_links(
     project.bin_ids = [bid for bid in dict.fromkeys(project.bin_ids) if bid in all_bins]
 
     project_tool_ids = set(project.tool_ids)
+    project.tool_quantities = {
+        tid: quantity for tid, quantity in project.tool_quantities.items()
+        if tid in project_tool_ids
+    }
     for tool_id, tool in all_tools.items():
         if tool_id in project_tool_ids and project.id not in tool.project_ids:
             tool.project_ids.append(project.id)

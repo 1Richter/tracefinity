@@ -4,7 +4,20 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.constants import PaperSize
+from app.constants import (
+    CUSTOM_SIZE_MAX_MM,
+    CUSTOM_SIZE_MIN_MM,
+    GF_GRID,
+    MAX_GRID_UNITS,
+    MAX_TOOL_QUANTITY,
+    PaperSize,
+)
+
+# "units" sizes the bin in gridfinity units, "custom" in exact outer mm
+SizeMode = Literal["units", "custom"]
+
+# upper bound for the derived unit count in custom mode
+MAX_DERIVED_GRID_UNITS = CUSTOM_SIZE_MAX_MM / GF_GRID
 
 
 class Point(BaseModel):
@@ -22,10 +35,12 @@ class FingerHole(BaseModel):
     x: float  # center position in pixels
     y: float
     radius: float = 15.0  # radius in mm for circles, half-width for squares
-    width: float | None = None  # for rectangles
-    height: float | None = None  # for rectangles
+    width: float | None = None  # for rectangles; length along the axis for lines
+    height: float | None = None  # for rectangles; trench width for lines
     rotation: float = 0.0  # degrees
-    shape: Literal["circle", "cylinder", "square", "rectangle", "filleted_rectangle"] = "circle"
+    shape: Literal[
+        "circle", "cylinder", "square", "rectangle", "filleted_rectangle", "line"
+    ] = "circle"
     depth_override: float | None = None  # mm; None = use bin_config.cutout_depth
 
 
@@ -83,6 +98,11 @@ class PolygonsRequest(BaseModel):
 class BinParams(BaseModel):
     grid_x: float = 2
     grid_y: float = 2
+    # custom mode sizes the bin in mm; grid_x/grid_y are then derived from the
+    # mm size, so bins written before custom sizing load unchanged
+    size_mode: SizeMode = "units"
+    custom_width_mm: float | None = None
+    custom_depth_mm: float | None = None
     height_units: int = 4
     magnets: bool = True
     magnet_diameter: float = 6.0
@@ -104,6 +124,28 @@ class BinParams(BaseModel):
     partial_bins_retain_wall: bool = False
 
     @model_validator(mode="after")
+    def resolve_size_mode(self) -> "BinParams":
+        """Derive grid_x/grid_y from the mm size in custom mode.
+
+        Everything downstream (base cells, magnets, partial bins, splitting)
+        already works in fractional gridfinity units, so custom mm sizes only
+        need the unit count derived from them; the exact outer footprint comes
+        from custom_width_mm/custom_depth_mm in the generator.
+        """
+        if self.size_mode == "custom":
+            if self.custom_width_mm is None or self.custom_depth_mm is None:
+                raise ValueError("custom size mode requires custom_width_mm and custom_depth_mm")
+            self.grid_x = self.custom_width_mm / GF_GRID
+            self.grid_y = self.custom_depth_mm / GF_GRID
+        else:
+            for value in (self.grid_x, self.grid_y):
+                if value > MAX_GRID_UNITS:
+                    raise ValueError(f"grid size must be between 1 and {MAX_GRID_UNITS:.0f}")
+                if value * 2 != int(value * 2):
+                    raise ValueError("grid size must be a multiple of 0.5")
+        return self
+
+    @model_validator(mode="after")
     def normalize_partial_bins_values(self) -> "BinParams":
         import math
 
@@ -119,11 +161,22 @@ class BinParams(BaseModel):
     @field_validator("grid_x", "grid_y")
     @classmethod
     def validate_grid(cls, v: float) -> float:
-        if v < 1 or v > 10:
-            raise ValueError("grid size must be between 1 and 10")
-        # must be a multiple of 0.5
-        if v * 2 != int(v * 2):
-            raise ValueError("grid size must be a multiple of 0.5")
+        # the 1-10 / half-unit rules only apply to unit mode and are enforced
+        # in resolve_size_mode; custom mode derives grid values up to
+        # CUSTOM_SIZE_MAX_MM / 42u, which this bound still has to allow
+        if v < 1 or v > MAX_DERIVED_GRID_UNITS + 1e-9:
+            raise ValueError(f"grid size must be between 1 and {MAX_GRID_UNITS:.0f}")
+        return v
+
+    @field_validator("custom_width_mm", "custom_depth_mm")
+    @classmethod
+    def validate_custom_size(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if v < CUSTOM_SIZE_MIN_MM or v > CUSTOM_SIZE_MAX_MM:
+            raise ValueError(
+                f"custom size must be between {CUSTOM_SIZE_MIN_MM:.0f} and {CUSTOM_SIZE_MAX_MM:.0f}mm"
+            )
         return v
 
     @field_validator("height_units")
@@ -192,6 +245,22 @@ class BinParams(BaseModel):
 class BinDefaults(BinParams):
     bed_size: float = 256.0  # mm, 0 = no splitting
 
+    @field_validator("bed_size")
+    @classmethod
+    def validate_bed_size(cls, v: float) -> float:
+        # the split cuts one slab per bed length, so a bed of a millimetre
+        # turns a large grid into hundreds of STLs plus a ZIP in one request.
+        # Wider than the frontend slider (BED_SIZE_MIN_MM / BED_SIZE_MAX_MM in
+        # frontend/src/lib/settings.ts) because the API also serves printers
+        # outside the sizes the slider offers; the part count itself is capped
+        # separately, since a legal bed and a legal grid can still combine into
+        # an unreasonable number of pieces.
+        if v == 0:
+            return v
+        if v < 50 or v > 1000:
+            raise ValueError("bed size must be 0 (no splitting) or between 50 and 1000mm")
+        return v
+
 
 class GenerateRequest(BinDefaults):
     polygons: list[Polygon] | None = None  # optional: use these instead of session polygons
@@ -203,6 +272,12 @@ class GenerateResponse(BaseModel):
     stl_urls: list[str] = []
     threemf_url: str | None = None
     split_count: int = 1
+    # the field the parts were cut into, so the preview can lay them out the
+    # way they will actually be printed. Both 0 when there is no split, or when
+    # the parts do not form a regular field. stl_urls is column-major:
+    # index = col * split_rows + row.
+    split_cols: int = 0
+    split_rows: int = 0
     zip_url: str | None = None
     insert_stl_url: str | None = None
     warning: str | None = None
@@ -351,6 +426,13 @@ ProjectHealthCode = Literal[
     "tool_extra_project_id",
 ]
 
+
+def validate_quantity(v: int) -> int:
+    if v < 1 or v > MAX_TOOL_QUANTITY:
+        raise ValueError(f"quantity must be between 1 and {MAX_TOOL_QUANTITY}")
+    return v
+
+
 class BinProject(BaseModel):
     id: str
     name: str
@@ -358,6 +440,9 @@ class BinProject(BaseModel):
     status: ProjectStatus = "active"
     tool_ids: list[str] = []
     bin_ids: list[str] = []
+    # how many copies of a tool the project plans for; a tool_id missing from
+    # the map means 1, so projects written before quantities load unchanged
+    tool_quantities: dict[str, int] = {}
     target_grid_x: float | None = None
     target_grid_y: float | None = None
     default_bin_config: BinDefaults | None = None
@@ -376,9 +461,21 @@ class BinProject(BaseModel):
             raise ValueError("grid size must be a multiple of 0.5")
         return v
 
+    @field_validator("tool_quantities")
+    @classmethod
+    def validate_tool_quantities(cls, v: dict[str, int]) -> dict[str, int]:
+        return {
+            tool_id: validate_quantity(quantity)
+            for tool_id, quantity in v.items()
+            if quantity != 1
+        }
+
+
 class BinProjectDetail(BinProject):
     placed_tool_ids: list[str] = []
     unplaced_tool_ids: list[str] = []
+    # placements found across the project's linked bins, per tool
+    placed_counts: dict[str, int] = {}
 
 
 class BinProjectSummary(BaseModel):
@@ -388,6 +485,7 @@ class BinProjectSummary(BaseModel):
     status: ProjectStatus = "active"
     tool_count: int = 0
     bin_count: int = 0
+    total_quantity: int = 0
     placed_count: int = 0
     unplaced_count: int = 0
     target_grid_x: float | None = None
@@ -447,6 +545,15 @@ class BinProjectToolsRequest(BaseModel):
     tool_ids: list[str]
 
 
+class BinProjectToolQuantityRequest(BaseModel):
+    quantity: int
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_tool_quantity(cls, v: int) -> int:
+        return validate_quantity(v)
+
+
 class BinProjectCreateBinRequest(BaseModel):
     name: str | None = None
     tool_ids: list[str] | None = None
@@ -486,6 +593,11 @@ class PlacedTool(BaseModel):
     interior_rings: list[list[Point]] = []  # mm, bin-space
     rotation: float = 0.0  # degrees, applied on top of library points
     depth_override: float | None = None  # mm; None = use bin_config.cutout_depth
+    # cutouts edited in the bin editor. library holes listed here keep their
+    # bin-local geometry on sync; ids listed as removed stay out of this
+    # placement. holes added in the bin have ids the library does not know.
+    custom_hole_ids: list[str] = []
+    removed_hole_ids: list[str] = []
 
 
 class BinConfig(BinDefaults):
@@ -517,6 +629,9 @@ class BinSummary(BaseModel):
     has_stl: bool
     grid_x: float = 2
     grid_y: float = 2
+    size_mode: SizeMode = "units"
+    custom_width_mm: float | None = None
+    custom_depth_mm: float | None = None
     preview_tools: list[BinPreviewTool] = []
 
 

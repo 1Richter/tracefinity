@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { MousePointer2, Trash2, Magnet, Type, Pencil, Maximize2 } from 'lucide-react'
-import type { FingerHole, PlacedTool, TextLabel } from '@/types'
+import { MousePointer2, Trash2, Magnet, Type, Pencil, Maximize2, Copy, Circle, Disc, Square, RectangleHorizontal, Squircle } from 'lucide-react'
+import type { CutoutShape, FingerHole, PlacedTool, TextLabel } from '@/types'
 import { SNAP_GRID_MIN, SNAP_GRID_MAX } from '@/lib/constants'
-import { cutoutShapeLabel, isRectangularCutout } from '@/lib/cutouts'
+import { cutoutShapeLabel, usesWidthHeight } from '@/lib/cutouts'
 import { NumericInput } from '@/components/NumericInput'
 
 interface DepthInputProps {
@@ -15,17 +15,23 @@ interface DepthInputProps {
   resetKey: string
 }
 
+// shallowest pocket the generator accepts, mirrors _resolve_pocket_depth
+const MIN_CUTOUT_DEPTH = 5
+
 function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: DepthInputProps) {
   const [text, setText] = useState<string>(value == null ? '' : String(value))
+  const [clamped, setClamped] = useState(false)
 
   // sync local text when the selected item changes (resetKey switches)
   useEffect(() => {
     setText(value == null ? '' : String(value))
+    setClamped(false)
   }, [resetKey, value])
 
   const commit = (raw: string) => {
     const trimmed = raw.trim()
     if (trimmed === '') {
+      setClamped(false)
       onCommit(null)
       return
     }
@@ -35,9 +41,12 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
       setText(value == null ? '' : String(value))
       return
     }
-    const clamped = Math.max(5, Math.min(maxDepth, n))
-    setText(String(clamped))
-    onCommit(clamped)
+    const next = Math.max(MIN_CUTOUT_DEPTH, Math.min(maxDepth, n))
+    // only a value cut down to the cap is what the hint is about; raising a
+    // too-shallow value to the 5mm floor is not
+    setClamped(next < n)
+    setText(String(next))
+    onCommit(next)
   }
 
   return (
@@ -46,6 +55,8 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
         type="number"
         value={text}
         placeholder={defaultDepth.toFixed(1)}
+        min={MIN_CUTOUT_DEPTH}
+        max={maxDepth}
         step={0.5}
         onChange={e => setText(e.target.value)}
         onBlur={e => commit(e.target.value)}
@@ -60,18 +71,38 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
       />
       {value != null && (
         <button
-          onClick={() => { setText(''); onCommit(null) }}
+          onClick={() => { setText(''); setClamped(false); onCommit(null) }}
           className="text-[10px] text-text-muted hover:text-text-secondary px-1"
           title="Reset to default"
         >
           ×
         </button>
       )}
+      <span
+        data-testid="max-depth-hint"
+        className={`text-[10px] whitespace-nowrap ${clamped ? 'text-amber-400' : 'text-text-muted'}`}
+        title={`Deeper cutouts would break through the bin floor at this bin height${clamped ? ' — value was clamped' : ''}`}
+      >
+        max {maxDepth.toFixed(1)}
+      </span>
     </>
   )
 }
 
-type Tool = 'select' | 'text'
+type Tool = 'select' | 'text' | CutoutShape
+
+// cutout shapes that can be placed on a tool from the bin editor, in toolbar order
+export const CUTOUT_TOOLS: { shape: CutoutShape; label: string; size: string; icon: typeof Circle }[] = [
+  { shape: 'circle', label: 'Circle (sphere)', size: '10mm', icon: Circle },
+  { shape: 'cylinder', label: 'Cylinder (flat)', size: '10mm', icon: Disc },
+  { shape: 'square', label: 'Square', size: '20mm', icon: Square },
+  { shape: 'rectangle', label: 'Rectangle', size: '30x20mm', icon: RectangleHorizontal },
+  { shape: 'filleted_rectangle', label: 'Filleted rectangle', size: '30x20mm', icon: Squircle },
+]
+
+export function isCutoutTool(tool: Tool): tool is CutoutShape {
+  return CUTOUT_TOOLS.some(item => item.shape === tool)
+}
 
 interface Props {
   activeTool: Tool
@@ -86,8 +117,10 @@ interface Props {
   selectedHole: FingerHole | null
   selectedHoleToolId: string | null
   onEditTool?: (toolId: string) => void
+  onDuplicateTool: () => void
   onRemoveTool: () => void
   onRemoveLabel: () => void
+  onRemoveHole: () => void
   smoothedToolIds?: Set<string>
   smoothLevels?: Map<string, number>
   onToggleSmoothed?: (toolId: string, smoothed: boolean) => void
@@ -116,8 +149,10 @@ export function BinEditorToolbar({
   selectedHole,
   selectedHoleToolId,
   onEditTool,
+  onDuplicateTool,
   onRemoveTool,
   onRemoveLabel,
+  onRemoveHole,
   smoothedToolIds,
   smoothLevels,
   onToggleSmoothed,
@@ -146,6 +181,20 @@ export function BinEditorToolbar({
         <Type className="w-3.5 h-3.5" />
         Text
       </button>
+
+      <div className="w-px h-4 bg-glass-border mx-1 flex-shrink-0" />
+
+      {CUTOUT_TOOLS.map(({ shape, label, size, icon: Icon }) => (
+        <button
+          key={shape}
+          onClick={() => setActiveTool(activeTool === shape ? 'select' : shape)}
+          className={`${tbBtn} ${activeTool === shape ? tbActive : tbInactive} px-1.5`}
+          title={`Add ${label.toLowerCase()} cutout (${size}) — click a placed tool`}
+          aria-label={`Add ${label} cutout`}
+        >
+          <Icon className="w-3.5 h-3.5" />
+        </button>
+      ))}
 
       <div className="w-px h-4 bg-glass-border mx-1 flex-shrink-0" />
 
@@ -227,6 +276,14 @@ export function BinEditorToolbar({
             </button>
           )}
           <button
+            onClick={onDuplicateTool}
+            className={`${tbBtn} ${tbInactive}`}
+            title="Duplicate tool (Ctrl+D, or Ctrl+C / Ctrl+V)"
+            aria-label="Duplicate"
+          >
+            <Copy className="w-3 h-3" />
+          </button>
+          <button
             onClick={onRemoveTool}
             className={`${tbBtn} text-red-400 hover:bg-red-900/20`}
             aria-label="Remove"
@@ -293,7 +350,7 @@ export function BinEditorToolbar({
           <div className="w-px h-4 bg-glass-border mx-1 flex-shrink-0" />
           <span className="text-[10px] text-text-muted">
             {cutoutShapeLabel(selectedHole.shape)}
-            {isRectangularCutout(selectedHole.shape) && selectedHole.width && selectedHole.height
+            {usesWidthHeight(selectedHole.shape) && selectedHole.width && selectedHole.height
               ? ` ${selectedHole.width.toFixed(0)}×${selectedHole.height.toFixed(0)}mm`
               : selectedHole.shape === 'square'
               ? ` ${(selectedHole.radius * 2).toFixed(0)}mm`
@@ -312,6 +369,14 @@ export function BinEditorToolbar({
               resetKey={`hole:${selectedHoleToolId}:${selectedHole.id}`}
             />
           </div>
+          <button
+            onClick={onRemoveHole}
+            className={`${tbBtn} text-red-400 hover:bg-red-900/20`}
+            title="Delete cutout from this placement (Del)"
+            aria-label="Delete cutout"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
         </>
       )}
     </>

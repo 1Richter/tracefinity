@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { getProjectCollections, getUniqueBinTools } from './projectSelectors'
+import {
+  binProjectLabel,
+  clampToolQuantity,
+  expandToolIdsByQuantity,
+  getProjectCollections,
+  getUniqueBinTools,
+  isProjectOwnedBin,
+  toolPlacementLabel,
+  toolQuantity,
+  MAX_TOOL_QUANTITY,
+} from './projectSelectors'
 import type { BinProject, BinSummary, ToolSummary } from '@/types'
 
 const tool = (id: string): ToolSummary => ({
@@ -33,6 +43,9 @@ const bin = (toolIds: string[]): BinSummary => ({
   has_stl: false,
   grid_x: 2,
   grid_y: 2,
+  size_mode: 'units',
+  custom_width_mm: null,
+  custom_depth_mm: null,
   preview_tools: [],
 })
 
@@ -43,8 +56,10 @@ const project: BinProject = {
   status: 'active',
   tool_ids: ['tool-1', 'tool-2'],
   bin_ids: ['bin-1'],
+  tool_quantities: {},
   placed_tool_ids: ['tool-1'],
   unplaced_tool_ids: ['tool-2'],
+  placed_counts: { 'tool-1': 1 },
   target_grid_x: null,
   target_grid_y: null,
   default_bin_config: null,
@@ -71,5 +86,77 @@ describe('project selectors', () => {
     })
 
     expect(collections.toolBins.get(toolOne.id)?.map(item => item.id)).toEqual(['bin-1'])
+  })
+})
+
+describe('tool quantities', () => {
+  const withQuantities = (
+    quantities: Record<string, number>,
+    placedCounts: Record<string, number> = {},
+  ): BinProject => ({
+    ...project,
+    tool_quantities: quantities,
+    placed_counts: placedCounts,
+  })
+
+  it('treats tools missing from the quantity map as a single copy', () => {
+    expect(toolQuantity(withQuantities({ 'tool-2': 3 }), 'tool-1')).toBe(1)
+    expect(toolQuantity(withQuantities({ 'tool-2': 3 }), 'tool-2')).toBe(3)
+    expect(toolQuantity(null, 'tool-1')).toBe(1)
+  })
+
+  it('repeats each tool id once per planned copy', () => {
+    expect(expandToolIdsByQuantity(withQuantities({ 'tool-1': 3 }), ['tool-1', 'tool-2']))
+      .toEqual(['tool-1', 'tool-1', 'tool-1', 'tool-2'])
+  })
+
+  it('leaves the selection untouched when no tool has extra copies', () => {
+    expect(expandToolIdsByQuantity(withQuantities({}), ['tool-1', 'tool-2']))
+      .toEqual(['tool-1', 'tool-2'])
+  })
+
+  it('reports progress against the planned copies', () => {
+    const target = withQuantities({ 'tool-1': 3 }, { 'tool-1': 2 })
+
+    expect(toolPlacementLabel(target, 'tool-1')).toBe('2/3 placed')
+    expect(toolPlacementLabel(target, 'tool-2')).toBe('0/1 placed')
+  })
+
+  it('caps the placed count so extra copies in bins never overshoot', () => {
+    expect(toolPlacementLabel(withQuantities({}, { 'tool-1': 4 }), 'tool-1')).toBe('1/1 placed')
+  })
+
+  it('clamps quantities to the allowed range', () => {
+    expect(clampToolQuantity(0)).toBe(1)
+    expect(clampToolQuantity(-5)).toBe(1)
+    expect(clampToolQuantity(MAX_TOOL_QUANTITY + 1)).toBe(MAX_TOOL_QUANTITY)
+    expect(clampToolQuantity(2.4)).toBe(2)
+    expect(clampToolQuantity(Number.NaN)).toBe(1)
+  })
+})
+
+describe('dashboard bin ownership', () => {
+  const names = new Map([['project-1', 'Workbench']])
+
+  it('treats a bin with a project id as owned', () => {
+    expect(isProjectOwnedBin(bin([]))).toBe(true)
+    expect(isProjectOwnedBin({ ...bin([]), project_id: null })).toBe(false)
+  })
+
+  it('labels an owned bin with its project name', () => {
+    expect(binProjectLabel(bin([]), names)).toBe('Workbench')
+  })
+
+  it('never hides a bin without a badge to explain it', () => {
+    // a bin whose project is missing from the dashboard list is still hidden,
+    // so it has to carry a fallback label once the user reveals it
+    const orphan = { ...bin([]), project_id: 'project-gone' }
+
+    expect(isProjectOwnedBin(orphan)).toBe(true)
+    expect(binProjectLabel(orphan, names)).toBe('Project')
+  })
+
+  it('gives an unowned bin no label', () => {
+    expect(binProjectLabel({ ...bin([]), project_id: null }, names)).toBeNull()
   })
 })

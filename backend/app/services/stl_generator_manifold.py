@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import time
+from typing import NamedTuple
 
 import numpy as np
 
@@ -32,6 +33,10 @@ LIP_D1 = 1.8
 LIP_D2 = 0.7
 LIP_D3 = 1.2
 LIP_D4 = LIP_D0 + LIP_D2  # 2.6
+
+# narrowest base unit whose bottom taper still has a valid rounded profile:
+# 2*GF_CORNER_R + 2*BASE_H_TOP + 2*BASE_H_BOT, rounded up
+MIN_BASE_CELL_MM = 14.0
 
 MAGNET_DIAMETER = 6.0
 MAGNET_DEPTH = 2.4
@@ -158,30 +163,79 @@ def _build_stacking_lip_notch(outer_w: float, outer_h: float):
     return mf.Manifold.batch_boolean([l0, l1, l2, l3, l4], mf.OpType.Add)
 
 
-def _base_cell_layout(grid_units: float, cell_size: float) -> list[tuple[float, float]]:
+def _base_cell_layout(
+    grid_units: float, cell_size: float, partial_first: bool = False
+) -> list[tuple[float, float]]:
     """cell centres and widths along one axis for the baseplate.
 
     for integer grid sizes every cell is cell_size wide. for fractional
-    sizes (e.g. 3.5) the last cell is a half-width partial cell.
-    returns list of (centre_offset, cell_width) tuples.
+    sizes (e.g. 3.5) one cell is a half-width partial cell. it sits at the
+    high end of the axis, or at the low end with partial_first.
+    returns list of (centre_offset, cell_width) tuples, low end first.
     """
     total = grid_units * GF_GRID
     n_cells = math.ceil(total / cell_size - 1e-9)
-    cells: list[tuple[float, float]] = []
+    widths: list[float] = []
     for i in range(n_cells):
         w = min(cell_size, total - i * cell_size)
         if w < 1.0:
             break
-        cx = i * cell_size + w / 2.0 - total / 2.0
-        cells.append((cx, w))
+        widths.append(w)
+    # a custom mm size leaves an arbitrary remainder; a base unit thinner than
+    # MIN_BASE_CELL_MM degenerates (its tapered profile inverts), so the sliver
+    # is folded into the neighbouring cell instead of standing on its own
+    if len(widths) > 1 and widths[-1] < MIN_BASE_CELL_MM:
+        sliver = widths.pop()
+        widths[-1] += sliver
+    if partial_first:
+        widths.reverse()
+
+    cells: list[tuple[float, float]] = []
+    edge = -total / 2.0
+    for w in widths:
+        cells.append((edge + w / 2.0, w))
+        edge += w
     return cells
 
 
-def _cell_center(ix: int, iy: int, grid_x: int, grid_y: int) -> tuple[float, float]:
+def _outer_dims(config) -> tuple[float, float]:
+    """Outer footprint of the bin in mm.
+
+    Unit-sized bins keep the 0.5mm gridfinity clearance so neighbouring bins
+    share a baseplate. Custom mm bins are built to exactly the requested outer
+    size -- they are meant to fill a drawer or shelf, not tile a baseplate.
+    """
+    if getattr(config, "size_mode", "units") == "custom":
+        return float(config.custom_width_mm), float(config.custom_depth_mm)
+    return config.grid_x * GF_GRID - 0.5, config.grid_y * GF_GRID - 0.5
+
+
+def _cell_layout_xy(config: GenerateRequest) -> tuple[list, list]:
+    """Full-cell (42mm) layout of the bin along both axes.
+
+    The bin editor draws its grid from the top-left corner, so the partial
+    cell of a fractional grid ends up at the right edge and in the bottom
+    row. Manifold +y is the editor's top edge, so on the y axis the partial
+    cell has to come first for the STL to match what the user placed tools
+    against.
+    """
     return (
-        (ix - (grid_x - 1) / 2.0) * GF_GRID,
-        (iy - (grid_y - 1) / 2.0) * GF_GRID,
+        _base_cell_layout(config.grid_x, GF_GRID),
+        _base_cell_layout(config.grid_y, GF_GRID, partial_first=True),
     )
+
+
+def _cell_bounds(config: GenerateRequest, ix: int, iy: int) -> tuple[float, float, float, float]:
+    """(x0, x1, y0, y1) of one grid cell. Partial cells are narrower than 42mm."""
+    x_cells, y_cells = _cell_layout_xy(config)
+    cx, cw = x_cells[min(ix, len(x_cells) - 1)]
+    cy, ch = y_cells[min(iy, len(y_cells) - 1)]
+    return cx - cw / 2.0, cx + cw / 2.0, cy - ch / 2.0, cy + ch / 2.0
+
+
+def _cell_center(config: GenerateRequest, ix: int, iy: int) -> tuple[float, float]:
+    x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
+    return (x0 + x1) / 2.0, (y0 + y1) / 2.0
 
 
 def _partial_cell_index(config: GenerateRequest, ix: int, iy: int) -> int:
@@ -269,15 +323,14 @@ def _build_shell(config: GenerateRequest):
 
     grid_x, grid_y = config.grid_x, config.grid_y
     height = config.height_units * GF_HEIGHT_UNIT
-    outer_w = grid_x * GF_GRID - 0.5
-    outer_h = grid_y * GF_GRID - 0.5
+    outer_w, outer_h = _outer_dims(config)
     r = GF_CORNER_R
 
     half_grid = getattr(config, "half_grid_base", False)
     cell_size = GF_HALF_GRID if half_grid else GF_GRID
 
     x_cells = _base_cell_layout(grid_x, cell_size)
-    y_cells = _base_cell_layout(grid_y, cell_size)
+    y_cells = _base_cell_layout(grid_y, cell_size, partial_first=True)
 
     base_units = []
     for cy, ch in y_cells:
@@ -310,12 +363,21 @@ def _grid_cell_counts(config: GenerateRequest) -> tuple[int, int]:
     return math.ceil(config.grid_x), math.ceil(config.grid_y)
 
 
+def _span_index(cells: list[tuple[float, float]], value: float) -> int:
+    """Index of the cell whose span contains value, clamped to the outer cells."""
+    for i, (centre, width) in enumerate(cells):
+        if value < centre + width / 2.0:
+            return i
+    return max(0, len(cells) - 1)
+
+
 def _label_layout_cell(config: GenerateRequest, x_mm: float, y_mm: float) -> tuple[int, int]:
     """Map a text label position (bin layout mm, origin top-left) to grid cell indices."""
-    grid_x, grid_y = _grid_cell_counts(config)
-    ix = min(max(int(x_mm // GF_GRID), 0), grid_x - 1)
-    # rows pitch from the bottom; fractional remainder band is the top row
-    iy = min(max(int((config.grid_y * GF_GRID - y_mm) // GF_GRID), 0), grid_y - 1)
+    x_cells, y_cells = _cell_layout_xy(config)
+    # layout mm are measured from the top-left corner, cells from the centre
+    # of the bin with +y pointing at the editor's top edge
+    ix = _span_index(x_cells, x_mm - config.grid_x * GF_GRID / 2.0)
+    iy = _span_index(y_cells, config.grid_y * GF_GRID / 2.0 - y_mm)
     return ix, iy
 
 
@@ -353,15 +415,14 @@ def _find_disabled_components(config: GenerateRequest) -> list[list[tuple[int, i
 
 
 def _component_world_bbox(config: GenerateRequest, cells: list[tuple[int, int]]):
-    half = GF_GRID / 2.0
     min_x = min_y = float("inf")
     max_x = max_y = float("-inf")
     for ix, iy in cells:
-        cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
-        min_x = min(min_x, cx - half)
-        max_x = max(max_x, cx + half)
-        min_y = min(min_y, cy - half)
-        max_y = max(max_y, cy + half)
+        x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
+        min_x = min(min_x, x0)
+        max_x = max(max_x, x1)
+        min_y = min(min_y, y0)
+        max_y = max(max_y, y1)
     return min_x, min_y, max_x, max_y
 
 
@@ -372,9 +433,9 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
     cutters = []
     cut_height = top_z - GF_BASE_HEIGHT + 0.2
     retain_wall = _partial_bins_retain_wall(config)
-    bin_hw = (config.grid_x * GF_GRID - 0.5) / 2.0
-    bin_hh = (config.grid_y * GF_GRID - 0.5) / 2.0
-    half = GF_GRID / 2.0
+    outer_w, outer_h = _outer_dims(config)
+    bin_hw = outer_w / 2.0
+    bin_hh = outer_h / 2.0
     preserve = PARTIAL_BIN_RETAIN_WALL_PRESERVE_MM
     grid_x, grid_y = _grid_cell_counts(config)
 
@@ -382,10 +443,8 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
         for ix in range(grid_x):
             if _cell_enabled(config, ix, iy):
                 continue
-            cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
+            x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
             if retain_wall:
-                x0, x1 = cx - half, cx + half
-                y0, y1 = cy - half, cy + half
                 if ix == 0:
                     x0 = max(x0, -bin_hw + preserve)
                 if ix == grid_x - 1:
@@ -403,9 +462,11 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
                     mf.Manifold.extrude(cs, cut_height).translate((ccx, ccy, GF_BASE_HEIGHT - 0.1))
                 )
             else:
-                cs = _cs(_sharp_rect_pts(GF_GRID, GF_GRID))
+                cs = _cs(_sharp_rect_pts(x1 - x0, y1 - y0))
                 cutters.append(
-                    mf.Manifold.extrude(cs, cut_height).translate((cx, cy, GF_BASE_HEIGHT - 0.1))
+                    mf.Manifold.extrude(cs, cut_height).translate(
+                        ((x0 + x1) / 2.0, (y0 + y1) / 2.0, GF_BASE_HEIGHT - 0.1)
+                    )
                 )
 
     if not cutters:
@@ -418,9 +479,7 @@ def _make_connect_mode_stability_plates(config: GenerateRequest):
     import manifold3d as mf
 
     plates = []
-    overlap = GF_GRID / 2.0
-    outer_w = config.grid_x * GF_GRID - 0.5
-    outer_h = config.grid_y * GF_GRID - 0.5
+    outer_w, outer_h = _outer_dims(config)
     bin_hw = outer_w / 2.0
     bin_hh = outer_h / 2.0
     grid_x, grid_y = _grid_cell_counts(config)
@@ -435,15 +494,17 @@ def _make_connect_mode_stability_plates(config: GenerateRequest):
                     continue
                 if not _cell_enabled(config, nx, ny):
                     continue
-                ncx, ncy = _cell_center(nx, ny, config.grid_x, config.grid_y)
+                # reach across the whole enabled neighbour so the plate is
+                # anchored in it
+                nx0, nx1, ny0, ny1 = _cell_bounds(config, nx, ny)
                 if dx == 1:
-                    max_x = max(max_x, ncx + overlap)
+                    max_x = max(max_x, nx1)
                 elif dx == -1:
-                    min_x = min(min_x, ncx - overlap)
+                    min_x = min(min_x, nx0)
                 if dy == 1:
-                    max_y = max(max_y, ncy + overlap)
+                    max_y = max(max_y, ny1)
                 elif dy == -1:
-                    min_y = min(min_y, ncy - overlap)
+                    min_y = min(min_y, ny0)
 
         min_x = max(min_x, -bin_hw)
         max_x = min(max_x, bin_hw)
@@ -475,10 +536,12 @@ def _make_disabled_cell_cutters(config: GenerateRequest, top_z: float):
         for ix in range(grid_x):
             if _cell_enabled(config, ix, iy):
                 continue
-            cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
-            cs = _cs(_sharp_rect_pts(GF_GRID, GF_GRID))
+            x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
+            cs = _cs(_sharp_rect_pts(x1 - x0, y1 - y0))
             cutters.append(
-                mf.Manifold.extrude(cs, top_z + 0.2).translate((cx, cy, -0.1))
+                mf.Manifold.extrude(cs, top_z + 0.2).translate(
+                    ((x0 + x1) / 2.0, (y0 + y1) / 2.0, -0.1)
+                )
             )
 
     if not cutters:
@@ -622,6 +685,67 @@ def _make_filleted_rectangle_cutter(
     )
 
 
+def _line_cutter_parts(length: float, trench: float) -> tuple[float, float]:
+    """Straight body length and end-cap radius of a cutout line.
+
+    The line is a stadium: a rectangle of (length - trench) capped by two
+    half-circles of trench/2, so the overall footprint is length x trench.
+    A line shorter than it is wide degenerates to a single round pocket.
+    """
+    t = max(trench, 0.01)
+    total = max(length, t)
+    return max(total - t, 0.0), t / 2.0
+
+
+def _make_line_cutter(
+    length: float,
+    trench: float,
+    pocket_depth: float,
+    wall_top_z: float,
+    rotation: float,
+    x: float,
+    y: float,
+):
+    """Flat-bottomed trench with rounded ends, cut down from the floor face."""
+    import manifold3d as mf
+
+    body_len, r = _line_cutter_parts(length, trench)
+    height = pocket_depth + 0.01
+    parts = [
+        mf.Manifold.cylinder(height, r, circular_segments=ROUND_SEGS).translate(
+            (sign * body_len / 2.0, 0.0, 0.0)
+        )
+        for sign in (-1.0, 1.0)
+    ]
+    if body_len > 1e-6:
+        parts.append(
+            mf.Manifold.cube((body_len, r * 2, height), center=True).translate(
+                (0.0, 0.0, height / 2.0)
+            )
+        )
+    cutter = mf.Manifold.batch_boolean(parts, mf.OpType.Add)
+    return (
+        cutter
+        .rotate((0.0, 0.0, rotation))
+        .translate((x, y, wall_top_z - pocket_depth - 0.005))
+    )
+
+
+def _line_cross_section(length: float, trench: float, rotation: float):
+    """2D stadium footprint of a cutout line, used for its chamfer cutter."""
+    import manifold3d as mf
+
+    body_len, r = _line_cutter_parts(length, trench)
+    cs = mf.CrossSection.circle(r, circular_segments=ROUND_SEGS).translate(
+        (-body_len / 2.0, 0.0)
+    ) + mf.CrossSection.circle(r, circular_segments=ROUND_SEGS).translate(
+        (body_len / 2.0, 0.0)
+    )
+    if body_len > 1e-6:
+        cs = cs + mf.CrossSection.square((body_len, r * 2), center=True)
+    return cs.rotate(rotation) if rotation else cs
+
+
 def _make_magnet_holes(config: GenerateRequest):
     """Batch union of all magnet hole cylinders (4 per cell, or corners only).
 
@@ -642,53 +766,46 @@ def _make_magnet_holes(config: GenerateRequest):
     r = diameter / 2
     mag = mf.Manifold.cylinder(depth + 0.01, r, circular_segments=ROUND_SEGS)
 
-    x_cells = _base_cell_layout(config.grid_x, GF_GRID)
-    y_cells = _base_cell_layout(config.grid_y, GF_GRID)
+    x_cells, y_cells = _cell_layout_xy(config)
 
     if not x_cells or not y_cells:
         return mf.Manifold()
 
-    # skip partial cells (width < 42mm) -- magnets only on full cells
-    x_full = [(cx, cw) for cx, cw in x_cells if abs(cw - GF_GRID) < 0.01]
-    y_full = [(cy, ch) for cy, ch in y_cells if abs(ch - GF_GRID) < 0.01]
+    # skip partial cells (width < 42mm) -- magnets only on full cells.
+    # keep the cell index so partial bins can be checked per cell
+    x_full = [(i, cx) for i, (cx, cw) in enumerate(x_cells) if abs(cw - GF_GRID) < 0.01]
+    y_full = [(i, cy) for i, (cy, ch) in enumerate(y_cells) if abs(ch - GF_GRID) < 0.01]
 
     if not x_full or not y_full:
         return mf.Manifold()
 
+    offsets = [(-13.0, -13.0), (13.0, -13.0), (13.0, 13.0), (-13.0, 13.0)]
+
     # outer bin corners for corners_only mode
     outer_corners = set()
     if corners_only:
-        grid_ix_max = math.ceil(config.grid_x) - 1
-        grid_iy_max = math.ceil(config.grid_y) - 1
-        for ix, (cx, _) in enumerate([x_full[0], x_full[-1]]):
-            for iy, (cy, _) in enumerate([y_full[0], y_full[-1]]):
-                if not _cell_retains_base(config, ix if ix == 0 else grid_ix_max, iy if iy == 0 else grid_iy_max):
+        for ix, cx in (x_full[0], x_full[-1]):
+            for iy, cy in (y_full[0], y_full[-1]):
+                if not _cell_retains_base(config, ix, iy):
                     continue
-                for dx, dy in [(-13.0, -13.0), (13.0, -13.0), (13.0, 13.0), (-13.0, 13.0)]:
+                for dx, dy in offsets:
                     # only the corner nearest the bin edge
-                    if cx == x_full[0][0] and dx > 0 and len(x_full) > 1:
+                    if cx == x_full[0][1] and dx > 0 and len(x_full) > 1:
                         continue
-                    if cx == x_full[-1][0] and dx < 0 and len(x_full) > 1:
+                    if cx == x_full[-1][1] and dx < 0 and len(x_full) > 1:
                         continue
-                    if cy == y_full[0][0] and dy > 0 and len(y_full) > 1:
+                    if cy == y_full[0][1] and dy > 0 and len(y_full) > 1:
                         continue
-                    if cy == y_full[-1][0] and dy < 0 and len(y_full) > 1:
+                    if cy == y_full[-1][1] and dy < 0 and len(y_full) > 1:
                         continue
                     outer_corners.add((round(cx + dx, 4), round(cy + dy, 4)))
 
     holes = []
-    grid_ix = math.ceil(config.grid_x)
-    grid_iy = math.ceil(config.grid_y)
-    for iy in range(grid_iy):
-        for ix in range(grid_ix):
+    for iy, cy in y_full:
+        for ix, cx in x_full:
             if not _cell_retains_base(config, ix, iy):
                 continue
-            cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
-            if not any(abs(cx - fx) < 0.01 for fx, _ in x_full):
-                continue
-            if not any(abs(cy - fy) < 0.01 for fy, _ in y_full):
-                continue
-            for dx, dy in [(-13.0, -13.0), (13.0, -13.0), (13.0, 13.0), (-13.0, 13.0)]:
+            for dx, dy in offsets:
                 pos = (round(cx + dx, 4), round(cy + dy, 4))
                 if corners_only and pos not in outer_corners:
                     continue
@@ -789,8 +906,7 @@ def _interior_clip_rect(config):
     """
     from shapely.geometry import Polygon as _SPoly
 
-    outer_w = config.grid_x * GF_GRID - 0.5
-    outer_h = config.grid_y * GF_GRID - 0.5
+    outer_w, outer_h = _outer_dims(config)
     lip_inset = (LIP_D0 + LIP_D2) if getattr(config, "stacking_lip", False) else 0.0
     inset = max(config.wall_thickness, lip_inset)
     hw = outer_w / 2 - inset
@@ -1020,6 +1136,12 @@ def _make_finger_holes(
                     cutter = _make_filleted_rectangle_cutter(
                         w, h, pocket_depth, wall_top_z, rotation, fh_x, fh_y
                     )
+                elif shape == 'line':
+                    length = fh.width_mm if fh.width_mm else fh.radius_mm * 2
+                    trench = fh.height_mm if fh.height_mm else fh.radius_mm
+                    cutter = _make_line_cutter(
+                        length, trench, pocket_depth, wall_top_z, rotation, fh_x, fh_y
+                    )
                 else:
                     continue
                 cutters.append(cutter)
@@ -1075,6 +1197,11 @@ def _make_finger_hole_chamfers(
                     cs = mf.CrossSection.square((w, h), center=True)
                     if rotation:
                         cs = cs.rotate(rotation)
+                    cs_outer = cs.offset(eff_chamfer, mf.JoinType.Round)
+                elif shape == 'line':
+                    length = fh.width_mm if fh.width_mm else fh.radius_mm * 2
+                    trench = fh.height_mm if fh.height_mm else fh.radius_mm
+                    cs = _line_cross_section(length, trench, rotation)
                     cs_outer = cs.offset(eff_chamfer, mf.JoinType.Round)
                 else:
                     continue
@@ -1295,8 +1422,15 @@ def _manifold_to_trimesh(m):
     faces = mesh.tri_verts.astype(np.int64)
     tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
     # merge near-duplicate vertices and drop degenerate faces that manifold
-    # boolean ops can introduce at intersection seams
-    tm.merge_vertices()
+    # boolean ops can introduce at intersection seams. trimesh's default merge
+    # tolerance is tighter than the ~1e-4mm gaps manifold3d leaves at some
+    # seams, so nondegenerate_faces() below would strip the resulting sliver
+    # triangle without first welding its vertices into their neighbors,
+    # opening a boundary hole where the sliver used to be (reproduced on a
+    # real export: three vertices ~2e-4mm apart, one dropped triangle, three
+    # boundary edges -- exactly what a slicer reports as non-manifold).
+    # 1e-3mm is far below FDM resolution, so this can't affect print fidelity.
+    tm.merge_vertices(digits_vertex=3)
     # drop zero-area faces, then clean up orphaned vertices
     mask = tm.nondegenerate_faces()
     tm.update_faces(mask)
@@ -1310,17 +1444,37 @@ def _export_stl(m, path: str) -> None:
 
 
 def _export_3mf(bin_m, text_m, path: str) -> None:
+    """Write a 3MF. The text body stays a separate object for multi-colour
+    printing; without labels the file holds the bin body alone."""
     import trimesh
 
     scene = trimesh.Scene()
     scene.add_geometry(_manifold_to_trimesh(bin_m), node_name='bin', geom_name='bin')
-    scene.add_geometry(_manifold_to_trimesh(text_m), node_name='text', geom_name='text')
+    if text_m is not None and not text_m.is_empty():
+        scene.add_geometry(_manifold_to_trimesh(text_m), node_name='text', geom_name='text')
     data = scene.export(file_type='3mf')
     with open(path, 'wb') as f:
         f.write(data)
 
 
 # ── main generator class ──────────────────────────────────────────────────────
+
+class SplitParts(NamedTuple):
+    """One STL per printable piece, plus the shape they were cut in.
+
+    ``paths`` is column-major over the field -- all rows of the lowest x column
+    first, each axis counted from its low end -- so piece ``i`` sits at column
+    ``i // rows``, row ``i % rows``. The 3D preview lays them out that way.
+
+    ``cols`` and ``rows`` are 0 when there is no field to speak of: no split at
+    all, a partial bin decomposed into islands that keep their own positions,
+    or a cut that dropped an empty slab and left a hole in the grid.
+    """
+
+    paths: list[str]
+    cols: int
+    rows: int
+
 
 class ManifoldSTLGenerator:
     def generate_bin(
@@ -1340,8 +1494,7 @@ class ManifoldSTLGenerator:
         offset_x = -bin_width / 2
         offset_y = -bin_depth / 2
         wall_top_z = config.height_units * GF_HEIGHT_UNIT
-        outer_w = config.grid_x * GF_GRID - 0.5
-        outer_h = config.grid_y * GF_GRID - 0.5
+        outer_w, outer_h = _outer_dims(config)
         connect_bases = _partial_bins_connect_bases(config)
         partial_shell = _uses_partial_shell(config)
 
@@ -1452,12 +1605,18 @@ class ManifoldSTLGenerator:
             _export_stl(bin_body, output_path)
         logger.info("export_stl: %.2fs", time.monotonic() - t1)
 
-        # 3MF export (multi-colour)
-        if text_body and threemf_path:
+        # 3MF export: always written when a path is given. 3MF carries the unit
+        # (mm), so importing it into CAD keeps the scale that an STL import can
+        # get wrong; with embossed labels it also stays multi-colour.
+        if threemf_path:
             try:
                 _export_3mf(bin_body, text_body, threemf_path)
             except Exception:
-                logger.warning("3MF export failed, skipping", exc_info=True)
+                # every bin takes this path now, so a broken trimesh soft
+                # dependency costs the 3MF everywhere rather than only on
+                # labelled bins. The route turns the missing file into a
+                # warning the user can see.
+                logger.error("3MF export failed, skipping", exc_info=True)
 
         return bin_body, text_body
 
@@ -1539,8 +1698,10 @@ class ManifoldSTLGenerator:
         if bed_size <= 0 or total_mm <= bed_size:
             return []
         import math as _m
-        # work in half-units for split granularity
-        half_units = int(grid_count * 2)
+        # work in half-units for split granularity; a custom mm size rarely
+        # lands on a half-unit, so round up -- otherwise the trailing remainder
+        # is unaccounted for and the last piece can overflow the bed
+        half_units = max(1, _m.ceil(grid_count * 2 - 1e-9))
         max_halves = max(1, int(bed_size // GF_HALF_GRID))
         num_pieces = _m.ceil(half_units / max_halves)
         base = half_units // num_pieces
@@ -1561,27 +1722,16 @@ class ManifoldSTLGenerator:
         bed_size: float,
         output_dir: str,
         session_id: str,
-    ) -> list[str]:
-        """Split completed bin into bed-sized pieces. Returns list of output paths."""
-        import math
-
-        span_x, span_y = (
-            (config.grid_x, config.grid_y)
-            if _partial_bins_connect_bases(config)
-            else _effective_grid_span(config)
-        )
-        bin_width = span_x * GF_GRID
-        bin_depth = span_y * GF_GRID
-
-        fits_diagonal = (bin_width + bin_depth) / math.sqrt(2) <= bed_size
-        if fits_diagonal:
-            return []
+    ) -> "SplitParts":
+        """Cut the bin into bed-sized pieces and export one STL each."""
+        if self._fits_bed_diagonally(config, bed_size):
+            return SplitParts([], 0, 0)
 
         x_cuts = self._compute_split_points(config.grid_x * GF_GRID, config.grid_x, bed_size)
         y_cuts = self._compute_split_points(config.grid_y * GF_GRID, config.grid_y, bed_size)
 
         if not x_cuts and not y_cuts:
-            return []
+            return SplitParts([], 0, 0)
 
         part = bin_body + text_body if text_body else bin_body
 
@@ -1590,12 +1740,61 @@ class ManifoldSTLGenerator:
         for xp in x_pieces:
             pieces.extend(self._split_along_axis(xp, y_cuts, axis='y'))
 
+        cols, rows = len(x_cuts) + 1, len(y_cuts) + 1
+        paths = self._export_pieces(pieces, output_dir, session_id)
+        # an empty slab is dropped rather than exported, which leaves a hole in
+        # the field; report no field at all rather than a wrong one
+        if len(paths) != cols * rows:
+            cols = rows = 0
+        return SplitParts(paths, cols, rows)
+
+    # a 6x6 field already means 36 prints of one bin; past that the request is
+    # a mistake rather than a plan, and each part costs an STL on disk
+    MAX_SPLIT_PARTS = 36
+
+    @staticmethod
+    def _fits_bed_diagonally(config: GenerateRequest, bed_size: float) -> bool:
+        """A bin that fits the bed corner to corner is never cut."""
+        import math
+
+        span_x, span_y = (
+            (config.grid_x, config.grid_y)
+            if _partial_bins_connect_bases(config)
+            else _effective_grid_span(config)
+        )
+        width, depth = span_x * GF_GRID, span_y * GF_GRID
+        if getattr(config, "size_mode", "units") == "custom" and not _uses_partial_shell(config):
+            # the derived unit count rounds up to whole cells, which can make a
+            # custom bin look up to 42mm larger than it is on this check
+            width, depth = _outer_dims(config)
+        return (width + depth) / math.sqrt(2) <= bed_size
+
+    def split_field(self, config: GenerateRequest, bed_size: float) -> tuple[int, int]:
+        """Columns and rows split_bin would cut the bin into, without cutting.
+
+        Used to refuse an unreasonable part count before anything is generated.
+        The answer the preview gets comes from the export itself (SplitParts),
+        because only the export knows whether it took the bed-split path or
+        decomposed a partial bin into islands.
+        """
+        if bed_size <= 0 or self._fits_bed_diagonally(config, bed_size):
+            return (0, 0)
+        x_cuts = self._compute_split_points(config.grid_x * GF_GRID, config.grid_x, bed_size)
+        y_cuts = self._compute_split_points(config.grid_y * GF_GRID, config.grid_y, bed_size)
+        if not x_cuts and not y_cuts:
+            return (0, 0)
+        return (len(x_cuts) + 1, len(y_cuts) + 1)
+
+    def _export_pieces(self, pieces: list, output_dir: str, session_id: str) -> list[str]:
+        """Write one STL per piece. The index is zero-padded so the cached
+        response, which reads the parts back with a sorted glob, keeps the
+        order they were written in once there are ten or more."""
         paths = []
         for i, piece in enumerate(pieces):
-            path = f"{output_dir}/{session_id}_part{i + 1}.stl"
+            path = f"{output_dir}/{session_id}_part{i + 1:02d}.stl"
             _export_stl(piece, path)
             paths.append(path)
-
+        self._export_pieces_3mf(pieces, output_dir, session_id)
         return paths
 
     def export_separated_parts(
@@ -1605,18 +1804,17 @@ class ManifoldSTLGenerator:
         output_dir: str,
         session_id: str,
     ) -> list[str]:
-        """Export each disconnected manifold volume as its own STL file."""
+        """Export each disconnected manifold volume as its own STL file.
+
+        These are islands, not slabs: they keep their own positions in the bin
+        and form no grid, so callers get no field for them.
+        """
         part = bin_body + text_body if text_body and not text_body.is_empty() else bin_body
         pieces = [p for p in part.decompose() if not p.is_empty()]
         if len(pieces) < 2:
             return []
 
-        paths = []
-        for i, piece in enumerate(pieces):
-            path = f"{output_dir}/{session_id}_part{i + 1}.stl"
-            _export_stl(piece, path)
-            paths.append(path)
-        return paths
+        return self._export_pieces(pieces, output_dir, session_id)
 
     def export_split_parts(
         self,
@@ -1626,15 +1824,30 @@ class ManifoldSTLGenerator:
         bed_size: float,
         output_dir: str,
         session_id: str,
-    ) -> list[str]:
+    ) -> "SplitParts":
         """Export per-piece STLs for disconnected partial bins or bed-sized splits."""
         if _exports_separated_partial_parts(config):
             paths = self.export_separated_parts(bin_body, text_body, output_dir, session_id)
             if paths:
-                return paths
+                return SplitParts(paths, 0, 0)
         if bed_size > 0:
             return self.split_bin(bin_body, text_body, config, bed_size, output_dir, session_id)
-        return []
+        return SplitParts([], 0, 0)
+
+    @staticmethod
+    def _export_pieces_3mf(pieces: list, output_dir: str, session_id: str) -> None:
+        """Write a 3MF alongside each split STL, matching filenames by index.
+
+        Best-effort per piece: a broken 3MF (same soft-dependency failure mode
+        as the unsplit export) drops that piece's download rather than the
+        whole split -- the STL, which every piece already has, still prints.
+        """
+        for i, piece in enumerate(pieces):
+            path = f"{output_dir}/{session_id}_part{i + 1:02d}.3mf"
+            try:
+                _export_3mf(piece, None, path)
+            except Exception:
+                logger.error("3MF export failed for part %d, skipping", i + 1, exc_info=True)
 
     @staticmethod
     def _split_along_axis(part, cut_points: list[float], axis: str) -> list:
@@ -1646,11 +1859,16 @@ class ManifoldSTLGenerator:
         pieces = []
         remainder = part
 
-        for cut in cut_points:
-            top, bottom = remainder.split_by_plane(normal, cut)
-            if not top.is_empty():
-                pieces.append(top)
-            remainder = bottom
+        # cut points run low to high, and split_by_plane returns
+        # (above, below). keep the slab below each cut and carry the part
+        # above it into the next one -- carrying the lower half instead
+        # leaves every later cut outside the remainder, so a bin needing
+        # three or more pieces per axis came out as two.
+        for cut in sorted(cut_points):
+            above, below = remainder.split_by_plane(normal, cut)
+            if not below.is_empty():
+                pieces.append(below)
+            remainder = above
 
         if not remainder.is_empty():
             pieces.append(remainder)

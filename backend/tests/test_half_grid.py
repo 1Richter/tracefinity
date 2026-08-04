@@ -68,6 +68,18 @@ def test_cell_layout_fractional_full_grid_even_half_units(grid_units: float):
     assert abs(widths[-1] - GF_HALF_GRID) < 0.01
 
 
+def test_cell_layout_partial_first_moves_the_partial_cell_to_the_low_end():
+    # used for the y axis: manifold +y is the editor's top edge, so the
+    # partial cell has to sit at -y to land in the editor's bottom row
+    cells = _base_cell_layout(2.5, GF_GRID, partial_first=True)
+    widths = [w for _, w in cells]
+    assert abs(widths[0] - GF_HALF_GRID) < 0.01
+    assert all(abs(w - GF_GRID) < 0.01 for w in widths[1:])
+    # cells stay contiguous and centred on the origin
+    assert abs(cells[0][0] + 2.5 * GF_GRID / 2 - GF_HALF_GRID / 2) < 0.01
+    assert abs(sum(widths) - 2.5 * GF_GRID) < 0.01
+
+
 def test_cell_layout_half_grid():
     cells = _base_cell_layout(2, GF_HALF_GRID)
     assert len(cells) == 4  # 2 full units = 4 half-grid cells
@@ -231,5 +243,5 @@ def test_split_half_unit_bin(tmp_path: Path):
     )
     gen = ManifoldSTLGenerator()
     body, text = gen.generate_bin([], config, str(tmp_path / "big.stl"))
-    parts = gen.split_bin(body, text, config, 100, str(tmp_path), "test")
+    parts = gen.split_bin(body, text, config, 100, str(tmp_path), "test").paths
     assert len(parts) >= 2

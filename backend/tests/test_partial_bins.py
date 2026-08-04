@@ -26,6 +26,29 @@ def _base_config(**overrides) -> GenerateRequest:
     return GenerateRequest(**defaults)
 
 
+def test_partial_bins_fractional_grid_cuts_the_band_along_the_bottom(tmp_path: Path):
+    import manifold3d as mf
+
+    generator = ManifoldSTLGenerator()
+    # 1.5u deep: the 21mm band is the bottom row of the editor, i.e. the last
+    # row of the UI matrix. Disabling it has to remove material at -y.
+    config = _base_config(
+        grid_y=1.5,
+        partial_bins=True,
+        partial_bins_values=[True, True, False, False],
+    )
+
+    body, _ = generator.generate_bin([], config, str(tmp_path / "band.stl"))
+
+    def filled(x: float, y: float) -> float:
+        probe = mf.Manifold.sphere(0.4, 12).translate((x, y, 6.0))
+        return (body ^ probe).volume() / probe.volume()
+
+    # band spans y -31.5..-10.5, the full row above it -10.5..31.5
+    assert filled(0.0, -21.0) < 0.25
+    assert filled(0.0, 10.0) > 0.75
+
+
 def test_partial_cell_index_maps_ui_top_row_to_high_iy():
     config = _base_config(grid_y=8)
 
@@ -143,7 +166,7 @@ def test_partial_bins_connect_keeps_single_piece(tmp_path: Path):
     connect_body, _ = generator.generate_bin([], connect_config, str(tmp_path / "connect.stl"))
 
     assert len(cut_body.decompose()) >= 2
-    assert generator.export_split_parts(connect_body, None, connect_config, 0, str(tmp_path), "connect") == []
+    assert generator.export_split_parts(connect_body, None, connect_config, 0, str(tmp_path), "connect").paths == []
     assert connect_body.volume() > cut_body.volume()
     assert connect_body.volume() < generator.generate_bin(
         [],
@@ -170,7 +193,7 @@ def test_partial_bin_split_uses_enabled_span(tmp_path: Path):
         "partial",
     )
 
-    assert parts == []
+    assert parts.paths == []
 
 
 def test_partial_bins_cut_exports_separated_stls(tmp_path: Path):
@@ -185,7 +208,7 @@ def test_partial_bins_cut_exports_separated_stls(tmp_path: Path):
     )
 
     body, _ = generator.generate_bin([], config, str(tmp_path / "full.stl"))
-    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial")
+    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial").paths
 
     assert len(paths) >= 2
     assert all(Path(p).exists() for p in paths)
@@ -203,7 +226,7 @@ def test_partial_bins_connect_skips_separated_export(tmp_path: Path):
     )
 
     body, _ = generator.generate_bin([], config, str(tmp_path / "full.stl"))
-    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial")
+    paths = generator.export_split_parts(body, None, config, 0, str(tmp_path), "partial").paths
 
     assert paths == []
 
@@ -225,7 +248,7 @@ def test_connect_base_magnet_holes_in_disabled_cells(tmp_path: Path):
     body, _ = generator.generate_bin([], config, str(tmp_path / "connect.stl"))
 
     # iy=1 is a disabled row; magnet inset is 13 mm from cell centre
-    cx, cy = _cell_center(0, 1, 2, 4)
+    cx, cy = _cell_center(config, 0, 1)
     mx, my = cx - 13.0, cy - 13.0
     probe = mf.Manifold.sphere(0.4, 12).translate((mx, my, 1.0))
     overlap = (body ^ probe).volume()
@@ -250,7 +273,7 @@ def test_partial_bins_retain_wall_adds_perimeter_material(tmp_path: Path):
     )
 
     assert retain_body.volume() > connect_body.volume()
-    assert generator.export_split_parts(retain_body, None, base.model_copy(update={"partial_bins_retain_wall": True}), 0, str(tmp_path), "retain") == []
+    assert generator.export_split_parts(retain_body, None, base.model_copy(update={"partial_bins_retain_wall": True}), 0, str(tmp_path), "retain").paths == []
 
 
 def test_partial_bins_retain_wall_disabled_without_connect():
@@ -286,7 +309,7 @@ def test_connect_mode_split_uses_full_grid_footprint(tmp_path: Path):
     )
 
     body, _ = generator.generate_bin([], config, str(tmp_path / "connect.stl"))
-    parts = generator.split_bin(body, None, config, config.bed_size, str(tmp_path), "connect")
+    parts = generator.split_bin(body, None, config, config.bed_size, str(tmp_path), "connect").paths
 
     assert parts != []
 
@@ -330,35 +353,20 @@ def test_text_label_in_disabled_cell_excluded_from_stl(tmp_path: Path):
     assert text_span is None
 
 
-def test_label_layout_cell_fractional_grid_indexes_rows_from_bottom():
-    # 63mm layout: fractional 21mm band is the top row (iy=1),
-    # full 42mm row pitches from the bottom (iy=0)
+def test_label_layout_cell_fractional_grid_puts_partial_band_at_the_bottom():
+    # 63mm layout: the fractional 21mm band is the bottom row, i.e. the low
+    # end of the backend y axis (iy=0); the full 42mm row is the top (iy=1)
     config = _base_config(grid_y=1.5)
 
-    assert _label_layout_cell(config, 21, 30) == (0, 0)
-    assert _label_layout_cell(config, 21, 10) == (0, 1)
-    # centre exactly on a gridline goes to the higher-index cell, matching x
-    assert _label_layout_cell(config, 21, 21) == (0, 1)
+    assert _label_layout_cell(config, 21, 50) == (0, 0)
+    assert _label_layout_cell(config, 21, 30) == (0, 1)
+    # centre exactly on a gridline goes to the row above it, matching x
+    assert _label_layout_cell(config, 21, 42) == (0, 1)
 
 
-def test_text_label_fractional_grid_bottom_row_disabled_skips_label(tmp_path: Path):
+def test_text_label_fractional_grid_top_row_disabled_skips_label(tmp_path: Path):
     generator = ManifoldSTLGenerator()
-    # label at y=30 sits in the bottom 42mm row, which is disabled
-    config = _base_config(
-        grid_y=1.5,
-        partial_bins=True,
-        partial_bins_values=[True, True, False, False],
-        text_labels=[TextLabel(id="lbl", text="HELLO", x=21, y=30, emboss=True)],
-    )
-
-    _, text_body = generator.generate_bin([], config, str(tmp_path / "bottom.stl"))
-
-    assert text_body is None
-
-
-def test_text_label_fractional_grid_top_row_disabled_keeps_label(tmp_path: Path):
-    generator = ManifoldSTLGenerator()
-    # same label, but only the top 21mm band is disabled
+    # label at y=30 sits in the top 42mm row, which is disabled
     config = _base_config(
         grid_y=1.5,
         partial_bins=True,
@@ -367,5 +375,20 @@ def test_text_label_fractional_grid_top_row_disabled_keeps_label(tmp_path: Path)
     )
 
     _, text_body = generator.generate_bin([], config, str(tmp_path / "top.stl"))
+
+    assert text_body is None
+
+
+def test_text_label_fractional_grid_bottom_row_disabled_keeps_label(tmp_path: Path):
+    generator = ManifoldSTLGenerator()
+    # same label, but only the 21mm band along the bottom is disabled
+    config = _base_config(
+        grid_y=1.5,
+        partial_bins=True,
+        partial_bins_values=[True, True, False, False],
+        text_labels=[TextLabel(id="lbl", text="HELLO", x=21, y=30, emboss=True)],
+    )
+
+    _, text_body = generator.generate_bin([], config, str(tmp_path / "bottom.stl"))
 
     assert text_body is not None and not text_body.is_empty()

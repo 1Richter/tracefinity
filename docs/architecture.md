@@ -86,10 +86,12 @@ tracefinity/
 - **Tool**: a single traced polygon + finger holes, stored in mm, centred at origin. Lives in a persistent library (`tools.json`).
 - **PlacedTool**: a positioned copy of a tool in a bin. Points/holes in bin-space mm. Has `tool_id` linking back to source.
 - **Bin**: bin config + placed tools + text labels. Used for STL generation (`bins.json`).
-- **BinProject**: a planning group of tool ids and linked bin ids. Placement status is derived from linked bins (`projects.json`). Projects can carry default bin settings used when creating project bins.
+- **BinProject**: a planning group of tool ids and linked bin ids. Placement status is derived from linked bins (`projects.json`). Projects can carry default bin settings used when creating project bins. `tool_quantities` maps a tool id to the number of copies the project plans for; a missing entry means one, so a tool is only "placed" once every copy sits in a linked bin.
 - **Session**: ephemeral, used only for upload/trace workflow. Output is tools saved to library via `save-tools`.
 
 PlacedTools sync with their library source on bin load (`GET /bins/{id}`) via `bin_service.sync_placed_tools()`. Edits to a tool's points, finger holes, or name propagate to all bins that use it. The position offset is preserved.
+
+Cutouts edited in the bin editor are per-placement: `PlacedTool.custom_hole_ids` lists library holes whose bin copy wins over the library version, `removed_hole_ids` lists library holes deleted from that placement, and holes with ids the library does not know were added in the bin. Sync keeps all three intact, so bin-local cutout work is never overwritten by a later library edit.
 
 Projects do not own tools or bins. Tools keep `project_ids`, bins keep `project_id`, and project health/repair endpoints keep those links consistent when records are renamed, deleted, or manually edited.
 
@@ -100,4 +102,4 @@ When `TOOL_LABEL_PROVIDER=ollama`, `tool_namer.py` runs after contour extraction
 `routes.py` uses shared helpers to avoid duplication:
 - `_run_generate()` -- cache check, STL generation, split, zip, response. Used by both session and bin generation endpoints.
 - `_translate_points()` / `_translate_finger_holes()` -- offset points/holes by (dx, dy). Used when placing tools in bins.
-- `BinParams` base model in `schemas.py` -- shared fields and validators inherited by `BinConfig` and `GenerateRequest`.
+- `BinParams` base model in `schemas.py` -- shared fields and validators inherited by `BinConfig` and `GenerateRequest`. Its `resolve_size_mode` validator derives `grid_x`/`grid_y` from `custom_width_mm`/`custom_depth_mm` when `size_mode == "custom"` (see docs/stl-generation.md); bins stored before custom sizing default to `"units"` and load unchanged.

@@ -5,7 +5,7 @@ import type { Point, FingerHole, ToolImageContext } from '@/types'
 import type { SymmetryAxis } from '@/lib/symmetry'
 import { polygonPathData, smoothPathData } from '@/lib/svg'
 import { DISPLAY_SCALE } from '@/lib/constants'
-import { isRectangularCutout } from '@/lib/cutouts'
+import { usesWidthHeight } from '@/lib/cutouts'
 import { CutoutOverlay } from '@/components/CutoutOverlay'
 import type { EditMode, Selection } from '@/components/ToolEditorToolbar'
 
@@ -244,7 +244,7 @@ export function ToolEditorCanvas({
               bMaxX = Math.max(bMaxX, p.x); bMaxY = Math.max(bMaxY, p.y)
             }
             for (const fh of displayHoles) {
-              const r = isRectangularCutout(fh.shape) ? Math.max(fh.width || 0, fh.height || 0) / 2 : fh.radius
+              const r = usesWidthHeight(fh.shape) ? Math.max(fh.width || 0, fh.height || 0) / 2 : fh.radius
               bMinX = Math.min(bMinX, fh.x - r); bMinY = Math.min(bMinY, fh.y - r)
               bMaxX = Math.max(bMaxX, fh.x + r); bMaxY = Math.max(bMaxY, fh.y + r)
             }
@@ -314,7 +314,7 @@ export function ToolEditorCanvas({
             const r = fh.radius * DISPLAY_SCALE
             const shape = fh.shape || 'circle'
             const rotation = fh.rotation || 0
-            const isRectangular = isRectangularCutout(shape)
+            const isRectangular = usesWidthHeight(shape)
             const w = isRectangular && fh.width ? fh.width * DISPLAY_SCALE : r * 2
             const h = isRectangular && fh.height ? fh.height * DISPLAY_SCALE : r * 2
             const s = zvbW / 800

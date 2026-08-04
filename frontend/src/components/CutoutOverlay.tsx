@@ -1,6 +1,6 @@
 import type { FingerHole } from '@/types'
 import { DEFAULT_CUTOUT_DEPTH, DISPLAY_SCALE } from '@/lib/constants'
-import { filletedRectangleRadius, isFilletedRectangleCutout, isRectangularCutout } from '@/lib/cutouts'
+import { filletedRectangleRadius, isFilletedRectangleCutout, isLineCutout, usesWidthHeight } from '@/lib/cutouts'
 
 interface Props {
   holes: FingerHole[]
@@ -23,10 +23,14 @@ export function CutoutOverlay({ holes, zoom = 1, interactive, selectedId, editMo
         const shape = fh.shape || 'circle'
         const rotation = fh.rotation || 0
         const isSelected = interactive && selectedId === fh.id
-        const isRectangular = isRectangularCutout(shape)
+        const isRectangular = usesWidthHeight(shape)
         const isFilleted = isFilletedRectangleCutout(shape)
-        const w = isRectangular && fh.width ? fh.width * DISPLAY_SCALE : r * 2
+        const isLine = isLineCutout(shape)
+        const rawW = isRectangular && fh.width ? fh.width * DISPLAY_SCALE : r * 2
         const h = isRectangular && fh.height ? fh.height * DISPLAY_SCALE : r * 2
+        // the generator never cuts a line shorter than it is wide: such a line
+        // degenerates to a round pocket of the trench width
+        const w = isLine ? Math.max(rawW, h) : rawW
 
         const fill = isSelected ? 'rgb(30, 41, 59)' : 'rgb(51, 65, 85)'
         const stroke = isSelected ? 'rgb(90, 180, 222)' : 'rgb(30, 41, 59)'
@@ -57,7 +61,17 @@ export function CutoutOverlay({ holes, zoom = 1, interactive, selectedId, editMo
                 className="pointer-events-none"
               />
             )}
-            {(shape === 'square' || (isRectangular && !isFilleted)) && (
+            {isLine && (
+              // stadium: a rounded rect with rx = half the trench width
+              <rect
+                x={left} y={top} width={w} height={h} rx={h / 2} ry={h / 2}
+                fill={fill} stroke={stroke} strokeWidth={strokeWidth}
+                className={cursor}
+                onMouseDown={interactive && onMouseDown ? (e) => onMouseDown(fh.id, e) : undefined}
+                onClick={interactive && onClick ? onClick : undefined}
+              />
+            )}
+            {(shape === 'square' || (isRectangular && !isFilleted && !isLine)) && (
               <rect
                 x={left} y={top} width={w} height={h}
                 fill={fill} stroke={stroke} strokeWidth={strokeWidth}
