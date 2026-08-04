@@ -106,11 +106,19 @@ def pick_paper_orientation(
     return (height_mm, width_mm) if top > left else (width_mm, height_mm)
 
 
-def _load_u2netp():
+# rembg models suitable for the always-on paper-detection preprocessing step
+# (not the user-selectable tracers). Small and CPU-friendly, no GPU required:
+# u2netp is the historical default (~4.7MB, weak edges), u2net the full model
+# (~176MB), silueta a distilled u2net replacement (~43MB) with noticeably
+# better masks at similar CPU cost. See https://github.com/danielgatis/rembg.
+PAPER_DETECTION_MODELS = frozenset({"u2netp", "u2net", "silueta"})
+
+
+def _load_paper_model(name: str):
     from rembg import new_session
 
     from app.services.ort_runtime import get_onnx_providers
-    return new_session("u2netp", providers=get_onnx_providers())
+    return new_session(name, providers=get_onnx_providers())
 
 
 class ImageProcessor:
@@ -119,14 +127,20 @@ class ImageProcessor:
         from app.services.model_slot import ModelSlot
         from app.services.onnx_check import is_onnx_available
 
+        model = settings.paper_detection_model
+        if model not in PAPER_DETECTION_MODELS:
+            raise ValueError(
+                f"PAPER_DETECTION_MODEL={model!r} is not supported. "
+                f"Supported: {', '.join(sorted(PAPER_DETECTION_MODELS))}"
+            )
         self._onnx_available = is_onnx_available()
         if not self._onnx_available:
-            logger.warning("U2-Net unavailable (no ONNX runtime), paper detection using OpenCV-only")
-        # paper detection runs once per upload, so keeping ~200MB of U2-Net
-        # resident between two photos is not worth it
+            logger.warning("%s unavailable (no ONNX runtime), paper detection using OpenCV-only", model)
+        # paper detection runs once per upload, so keeping the model resident
+        # between two photos is not worth it
         self._tool_mask_model = ModelSlot(
-            _load_u2netp,
-            "U2-Net Portable (paper detection)",
+            lambda: _load_paper_model(model),
+            f"{model} (paper detection)",
             settings.model_idle_timeout_seconds,
         )
 
