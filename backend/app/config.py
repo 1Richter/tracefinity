@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     replicate_resolution: Optional[str] = None  # "WxH"; None => model default
     fal_operating_resolution: str = "1024x1024"
     tracefinity_onnx_provider: str = "auto"
+    # rembg model for the always-on paper-detection preprocessing step (not
+    # the user-selectable tracers): u2netp, u2net or silueta. See
+    # PAPER_DETECTION_MODELS in app/services/image_processor.py.
+    paper_detection_model: str = "u2netp"
     tool_label_provider: str = "none"
     tool_label_model: str = "qwen3-vl:4b"
     tool_label_ollama_url: str = "http://localhost:11434"

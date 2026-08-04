@@ -64,6 +64,7 @@ By default, Tracefinity uses [IS-Net](https://github.com/xuebinqin/DIS) for loca
 | `TRACEFINITY_ONNX_PROVIDER` | `auto` | Local ONNX provider: `auto`, `cuda`, or `cpu` |
 | `GEMINI_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Gemini model for mask generation (see below) |
 | `MODEL_IDLE_TIMEOUT_SECONDS` | `300` | Unload local models after this many idle seconds. `0` keeps them resident |
+| `PAPER_DETECTION_MODEL` | `u2netp` | rembg model for paper detection: `u2netp` (~4.7MB), `silueta` (~43MB, better masks), or `u2net` (~176MB) |
 | `TOOL_LABEL_PROVIDER` | `none` | Optional automatic tool naming. Set to `ollama` for local vision naming |
 | `SHOW_APP_VERSION` | `true` | Show the running version in the settings popover. Set to `false` to hide it |
 
