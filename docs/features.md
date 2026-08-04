@@ -45,6 +45,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Drag to move, corner handles to resize
 - Rotation handle on rectangular cutouts
 - Per-hole depth override
+- Maximum pocket depth shown in the bin editor toolbar; deeper values clamp so cutouts cannot break through the bin floor
 - Delete individual holes
 
 ## Bin Configuration

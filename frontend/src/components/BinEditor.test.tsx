@@ -294,3 +294,68 @@ describe('BinEditor cutout editing', () => {
     expect(screen.getByLabelText('Add Square cutout').className).not.toContain('text-accent')
   })
 })
+
+describe('BinEditor cutout depth cap', () => {
+  afterEach(cleanup)
+
+  const toolWithCutout = (): PlacedTool => ({
+    ...placedTool,
+    points: [{ x: 10, y: 10 }, { x: 40, y: 10 }, { x: 40, y: 40 }, { x: 10, y: 40 }],
+    finger_holes: [{ id: 'h1', x: 25, y: 25, radius: 3, shape: 'circle', rotation: 0 }],
+  })
+
+  function renderCapEditor() {
+    const onPlacedToolsChange = vi.fn()
+    const view = render(
+      <BinEditor {...baseProps} placedTools={[toolWithCutout()]} onPlacedToolsChange={onPlacedToolsChange} />
+    )
+    const canvas = view.container.querySelector('[data-testid="bin-canvas"]')!
+    return { canvas, onPlacedToolsChange }
+  }
+
+  const depthInput = () => screen.getByPlaceholderText(baseProps.defaultCutoutDepth.toFixed(1))
+
+  it('shows the maximum depth next to a tool depth override', () => {
+    const { canvas } = renderCapEditor()
+
+    fireEvent.mouseDown(canvas.querySelector('path')!)
+
+    expect(screen.getByTestId('max-depth-hint').textContent).toBe(`max ${baseProps.maxCutoutDepth.toFixed(1)}`)
+  })
+
+  it('clamps a too-deep cutout override and flags it', () => {
+    const { canvas, onPlacedToolsChange } = renderCapEditor()
+
+    fireEvent.mouseDown(canvas.querySelector('circle')!)
+    fireEvent.change(depthInput(), { target: { value: '999' } })
+    fireEvent.blur(depthInput())
+
+    const tool = onPlacedToolsChange.mock.calls.at(-1)![0][0] as PlacedTool
+    expect(tool.finger_holes[0].depth_override).toBe(baseProps.maxCutoutDepth)
+    expect(screen.getByTestId('max-depth-hint').className).toContain('text-amber-400')
+  })
+
+  it('raises a too-shallow depth without flagging the cap', () => {
+    const { canvas, onPlacedToolsChange } = renderCapEditor()
+
+    fireEvent.mouseDown(canvas.querySelector('circle')!)
+    fireEvent.change(depthInput(), { target: { value: '1' } })
+    fireEvent.blur(depthInput())
+
+    const tool = onPlacedToolsChange.mock.calls.at(-1)![0][0] as PlacedTool
+    expect(tool.finger_holes[0].depth_override).toBe(5)
+    expect(screen.getByTestId('max-depth-hint').className).toContain('text-text-muted')
+  })
+
+  it('keeps a depth within the cap unflagged', () => {
+    const { canvas, onPlacedToolsChange } = renderCapEditor()
+
+    fireEvent.mouseDown(canvas.querySelector('circle')!)
+    fireEvent.change(depthInput(), { target: { value: '12' } })
+    fireEvent.blur(depthInput())
+
+    const tool = onPlacedToolsChange.mock.calls.at(-1)![0][0] as PlacedTool
+    expect(tool.finger_holes[0].depth_override).toBe(12)
+    expect(screen.getByTestId('max-depth-hint').className).toContain('text-text-muted')
+  })
+})

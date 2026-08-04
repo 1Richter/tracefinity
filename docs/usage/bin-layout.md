@@ -28,6 +28,8 @@ With a tool selected, press Ctrl/Cmd+C then Ctrl/Cmd+V, press Ctrl/Cmd+D, or cli
 
 Select a tool to see a **Depth** field in the toolbar. Leave it blank to use the bin's default cutout depth. Enter a value to override it for that tool only. Click the reset button to clear the override.
 
+The **max** value next to the field is the deepest pocket the current bin height allows -- anything deeper would break through the bin floor. Entering more clamps to that maximum and the hint turns amber. The same field and cap apply to a selected cutout.
+
 ## Editing cutouts in the bin
 
 Cutouts of a placed tool can be edited without leaving the bin, and the changes apply to that placement only -- the library tool and every other bin keep the original cutouts.
@@ -38,6 +40,7 @@ Cutouts of a placed tool can be edited without leaving the bin, and the changes 
 - The trash button, or the Delete key, removes the selected cutout from this placement.
 
 Edits made here survive reloads: the bin remembers which cutouts were changed or removed, so later edits to the library tool no longer overwrite them. Untouched cutouts still follow the library tool.
+
 
 ## Text labels
 
