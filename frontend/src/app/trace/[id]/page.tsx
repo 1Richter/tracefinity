@@ -9,6 +9,7 @@ import { PolygonEditor } from '@/components/PolygonEditor'
 import { SessionInfo } from '@/components/SessionInfo'
 import { Alert } from '@/components/Alert'
 import { getSession, setCorners, traceTools, updatePolygons, updateSession, getImageUrl, getAvailableKeys, traceFromMask, saveToolsFromSession } from '@/lib/api'
+import { getLastTracer, resolvePreferredTracer, saveLastTracer } from '@/lib/settings'
 import { CornersHint, TraceHint, EditHint } from '@/components/OnboardingIllustrations'
 import { PhotoWarningsBanner } from '@/components/PhotoWarningsBanner'
 import { StepBar } from '@/components/StepBar'
@@ -111,7 +112,9 @@ export default function TracePage() {
         setProviderLabel(keys.provider_label)
         setProviderType(keys.provider)
         setTracers(keys.tracers || [])
-        if (keys.tracers?.length) setSelectedTracer(keys.tracers[0].id)
+        if (keys.tracers?.length) {
+          setSelectedTracer(resolvePreferredTracer(keys.tracers, getLastTracer()))
+        }
 
         if (!keys.google) {
           setProvider('manual')
@@ -447,7 +450,7 @@ export default function TracePage() {
                         return (
                           <button
                             key={t.id}
-                            onClick={() => { setSelectedTracer(t.id); setProvider('google'); setMethodOpen(false) }}
+                            onClick={() => { setSelectedTracer(t.id); saveLastTracer(t.id); setProvider('google'); setMethodOpen(false) }}
                             className={`w-full text-left px-3 py-1.5 text-xs transition-colors cursor-pointer flex items-center gap-2 ${
                               active ? 'text-accent' : 'text-text-secondary hover:bg-glass-hover hover:text-text-primary'
                             }`}
