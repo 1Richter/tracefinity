@@ -41,6 +41,18 @@ make lint-fix       # auto-fix where possible
 
 Backend: ruff, configured in `pyproject.toml` (rules E/F/W/I, ignores E402/E501). Frontend: eslint (flat config in `frontend/eslint.config.mjs`) + `tsc --noEmit`. CI runs on PRs and pushes to main (`.github/workflows/lint.yml`).
 
+## Testing
+
+```bash
+make test           # backend pytest + frontend vitest
+make test-backend   # pytest only
+make test-frontend  # vitest only
+```
+
+CI runs both unit suites on PRs and pushes to main (`.github/workflows/tests.yml`).
+
+`make test-e2e` runs the playwright suite. It needs a running app, is not part of `make test`, and does not run in CI.
+
 ## Principles
 
 - Coordinate systems differ across layers (see docs/gotchas.md). SVG/layout Y is down; manifold3d Y is up. Always negate Y when crossing that boundary.
