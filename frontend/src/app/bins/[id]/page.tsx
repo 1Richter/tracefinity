@@ -14,7 +14,8 @@ import { Breadcrumb } from '@/components/Breadcrumb'
 import { Alert } from '@/components/Alert'
 import { useDebouncedSave } from '@/hooks/useDebouncedSave'
 import { useProjectSource } from '@/hooks/useProjectSource'
-import { GRID_UNIT } from '@/lib/constants'
+import { clampGridUnits, GRID_MAX_UNITS, GRID_UNIT } from '@/lib/constants'
+import { gridUnitsForSpan, pointBounds } from '@/lib/binGrid'
 import { useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
 
@@ -205,26 +206,32 @@ export default function BinPage() {
     setPlacedTools(updated)
   }, [])
 
+  const gridMargin = 2 * config.wall_thickness + 2 * config.cutout_clearance + 0.5
+  const gridSnap = config.half_grid_base ? 0.5 : 1.0
+
+  const toolBounds = useMemo(
+    () => pointBounds(placedTools.map(tool => tool.points)),
+    [placedTools],
+  )
+
+  // auto-size works from tool bounds alone and can ask for more than the backend
+  // accepts (validate_grid: 1-10u), so both grid writers clamp. Derive the banner
+  // from the tools rather than from the clamp: a stored flag survives deleting the
+  // oversized tool, and adding a small one afterwards would wrongly clear it.
+  const gridClamped = useMemo(() => {
+    if (!autoSize || !toolBounds) return false
+    const wantX = gridUnitsForSpan(toolBounds.maxX - toolBounds.minX, gridMargin, gridSnap)
+    const wantY = gridUnitsForSpan(toolBounds.maxY - toolBounds.minY, gridMargin, gridSnap)
+    return wantX > GRID_MAX_UNITS || wantY > GRID_MAX_UNITS
+  }, [autoSize, toolBounds, gridMargin, gridSnap])
+
   // auto-size: fit grid to bounding box of all placed tools, recentre if grid changes
   useEffect(() => {
     // a custom mm size is user-declared; never resize or recentre it
-    if (!autoSize || isDragging || placedTools.length === 0 || config.size_mode === 'custom') return
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const tool of placedTools) {
-      for (const p of tool.points) {
-        minX = Math.min(minX, p.x)
-        minY = Math.min(minY, p.y)
-        maxX = Math.max(maxX, p.x)
-        maxY = Math.max(maxY, p.y)
-      }
-    }
-    const halfMargin = config.wall_thickness + config.cutout_clearance + 0.25
-    const toolW = maxX - minX
-    const toolH = maxY - minY
-    const snap = config.half_grid_base ? 0.5 : 1.0;
-    const snapUnit = GRID_UNIT * snap;
-    const needX = Math.max(1, Math.ceil((toolW + 2 * halfMargin) / snapUnit) * snap);
-    const needY = Math.max(1, Math.ceil((toolH + 2 * halfMargin) / snapUnit) * snap);
+    if (!autoSize || isDragging || !toolBounds || config.size_mode === 'custom') return
+    const { minX, minY, maxX, maxY } = toolBounds
+    const needX = clampGridUnits(gridUnitsForSpan(maxX - minX, gridMargin, gridSnap))
+    const needY = clampGridUnits(gridUnitsForSpan(maxY - minY, gridMargin, gridSnap))
 
     const gridChanged = config.grid_x !== needX || config.grid_y !== needY
     if (gridChanged) {
@@ -253,7 +260,7 @@ export default function BinPage() {
         ),
       })))
     }
-  }, [autoSize, isDragging, placedTools, config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base, config.size_mode])
+  }, [autoSize, isDragging, toolBounds, gridMargin, gridSnap, config.grid_x, config.grid_y, config.size_mode])
 
   const handleToggleSmoothed = useCallback(async (toolId: string, smoothed: boolean) => {
     try {
@@ -276,23 +283,24 @@ export default function BinPage() {
   }, [])
 
   const handleAddTool = useCallback((tool: PlacedTool) => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const p of tool.points) {
-      minX = Math.min(minX, p.x)
-      minY = Math.min(minY, p.y)
-      maxX = Math.max(maxX, p.x)
-      maxY = Math.max(maxY, p.y)
+    const bounds = pointBounds([tool.points])
+    if (!bounds) {
+      // nothing to measure, so nothing to grow or centre against; place it as
+      // it came rather than dropping a tool the user asked for
+      setPlacedTools(prev => [...prev, tool])
+      return
     }
-    const toolW = maxX - minX
-    const toolH = maxY - minY
+    const { minX, minY, maxX, maxY } = bounds
 
-    const margin = 2 * config.wall_thickness + 2 * config.cutout_clearance + 0.5;
-    const snap = config.half_grid_base ? 0.5 : 1.0;
-    const snapUnit = GRID_UNIT * snap;
-    // custom mm bins keep their size; the tool is only centred in it
+    // grow to fit the new tool, never shrink below what the bin already is;
+    // a custom mm bin keeps its size and only centres the tool in it
     const customSize = config.size_mode === 'custom'
-    const needX = customSize ? config.grid_x : Math.max(config.grid_x, Math.ceil((toolW + margin) / snapUnit) * snap);
-    const needY = customSize ? config.grid_y : Math.max(config.grid_y, Math.ceil((toolH + margin) / snapUnit) * snap);
+    const needX = customSize ? config.grid_x : clampGridUnits(
+      Math.max(config.grid_x, gridUnitsForSpan(maxX - minX, gridMargin, gridSnap)),
+    )
+    const needY = customSize ? config.grid_y : clampGridUnits(
+      Math.max(config.grid_y, gridUnitsForSpan(maxY - minY, gridMargin, gridSnap)),
+    )
 
     if (needX !== config.grid_x || needY !== config.grid_y) {
         setConfig((prev) => ({
@@ -320,7 +328,7 @@ export default function BinPage() {
     }
 
     setPlacedTools(prev => [...prev, placed])
-  }, [config.grid_x, config.grid_y, config.wall_thickness, config.cutout_clearance, config.half_grid_base, config.size_mode])
+  }, [config.grid_x, config.grid_y, gridMargin, gridSnap, config.size_mode])
 
   function handleDownload() {
     window.open(getBinStlUrl(binId), '_blank')
@@ -441,6 +449,14 @@ export default function BinPage() {
           {error && <Alert variant="error">{error}</Alert>}
           {warning && (
             <InfoBanner>{warning}</InfoBanner>
+          )}
+          {gridClamped && (
+            <InfoBanner>
+              These tools need more room than the maximum bin size of {GRID_MAX_UNITS}x{GRID_MAX_UNITS}u
+              ({GRID_MAX_UNITS * GRID_UNIT} x {GRID_MAX_UNITS * GRID_UNIT} mm), so auto-size stopped
+              growing the grid and anything past the wall is cut off in the STL. Split them across
+              two bins, and check that no single tool is longer than {GRID_MAX_UNITS * GRID_UNIT}mm.
+            </InfoBanner>
           )}
           {splitCount > 1 && (
             <InfoBanner>Split into {splitCount} pieces</InfoBanner>

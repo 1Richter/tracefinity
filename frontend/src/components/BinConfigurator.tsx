@@ -4,7 +4,7 @@ import { Info } from 'lucide-react'
 import type { BinConfig } from '@/types'
 import { NumericInput } from '@/components/NumericInput'
 import { binSizeMm, createPartialBinsValues, gridUnitsForSize, isCustomSize } from '@/lib/binDefaults'
-import { CUSTOM_SIZE_MAX_MM, CUSTOM_SIZE_MIN_MM } from '@/lib/constants'
+import { CUSTOM_SIZE_MAX_MM, CUSTOM_SIZE_MIN_MM, GRID_MAX_UNITS, GRID_MIN_UNITS } from '@/lib/constants'
 import { BED_SIZE_MAX_MM, BED_SIZE_MIN_MM } from '@/lib/settings'
 import { cn } from '@/lib/utils'
 import { ClassValue } from 'clsx'
@@ -275,8 +275,8 @@ export function BinConfigurator({ config, onChange, autoSize, onAutoSizeChange }
             label="Grid Width"
             help="Bin width in gridfinity units (42mm each). Half-unit increments (21mm) supported."
             value={config.grid_x}
-            min={1}
-            max={10}
+            min={GRID_MIN_UNITS}
+            max={GRID_MAX_UNITS}
             step={0.5}
             unit="u"
             onChange={(v) =>
@@ -292,8 +292,8 @@ export function BinConfigurator({ config, onChange, autoSize, onAutoSizeChange }
             label="Grid Depth"
             help="Bin depth in gridfinity units (42mm each). Half-unit increments (21mm) supported."
             value={config.grid_y}
-            min={1}
-            max={10}
+            min={GRID_MIN_UNITS}
+            max={GRID_MAX_UNITS}
             step={0.5}
             unit="u"
             onChange={(v) =>
@@ -306,6 +306,7 @@ export function BinConfigurator({ config, onChange, autoSize, onAutoSizeChange }
           />
         </>
       )}
+
 
       <SliderRow
         label="Height"
