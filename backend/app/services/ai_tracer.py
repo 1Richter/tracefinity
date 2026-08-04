@@ -151,8 +151,12 @@ class AITracer:
         return polygons, mask_output_path
 
     def _init_saliency_backend(self):
-        """prepare the saliency backend: load local weights, or build a remote
-        config (no heavy import on the remote path)."""
+        """prepare the saliency backend: a remote config (no heavy import), or
+        a slot that loads the local weights on first use and unloads them
+        again once the tracer has been idle (settings.model_idle_timeout_seconds).
+
+        the second element of the tuple is either a ready handle or a ModelSlot;
+        _saliency_on_image resolves it."""
         if self._saliency_backend is not None:
             return
         name = self.saliency_tracer
@@ -167,28 +171,58 @@ class AITracer:
             )
             self._saliency_backend = (name, cfg)
             return
+
+        from app.config import settings
+        from app.services.model_slot import ModelSlot
+
         label = LOCAL_MODEL_LABELS.get(name, name)
         if name in REMBG_MODELS:
+            # the AVX check is cheap and its failure is a configuration error,
+            # so it stays eager -- only the weights load lazily
             from app.services.onnx_check import is_onnx_available
             if not is_onnx_available():
                 raise RuntimeError(
                     f"local tracer '{name}' requires ONNX runtime but this CPU "
                     "lacks AVX support. Use a remote tracer (gemini/replicate/fal) instead."
                 )
-            from rembg import new_session
 
-            from app.services.ort_runtime import get_onnx_providers
-            providers = get_onnx_providers(require_gpu=name in GPU_REQUIRED_TRACERS)
-            logging.info("loading %s via rembg with providers: %s", label, providers)
-            session = new_session(REMBG_MODELS[name], providers=providers)
-            logging.info("%s actual ONNX providers: %s", label, session.inner_session.get_providers())
-            self._saliency_backend = ("rembg", session)
+            def load_rembg():
+                from rembg import new_session
+
+                from app.services.ort_runtime import get_onnx_providers
+                providers = get_onnx_providers(require_gpu=name in GPU_REQUIRED_TRACERS)
+                logging.info("loading %s via rembg with providers: %s", label, providers)
+                session = new_session(REMBG_MODELS[name], providers=providers)
+                logging.info("%s actual ONNX providers: %s", label, session.inner_session.get_providers())
+                return session
+
+            slot = ModelSlot(load_rembg, label, settings.model_idle_timeout_seconds)
+            self._saliency_backend = ("rembg", slot)
         elif name == "inspyrenet":
-            import torch
-            from transparent_background import Remover
-            device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-            logging.info("loading %s on %s", label, device)
-            self._saliency_backend = ("inspyrenet", Remover(mode="base", device=device))
+            def load_inspyrenet():
+                import torch
+                from transparent_background import Remover
+                device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+                logging.info("loading %s on %s", label, device)
+                return Remover(mode="base", device=device)
+
+            def release_torch_cache():
+                # torch returns freed device blocks to its own caching
+                # allocator, not to the driver, so dropping the model alone
+                # frees no VRAM
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+
+            slot = ModelSlot(
+                load_inspyrenet,
+                label,
+                settings.model_idle_timeout_seconds,
+                on_unload=release_torch_cache,
+            )
+            self._saliency_backend = ("inspyrenet", slot)
         else:
             raise ValueError(f"unsupported saliency model: {name}")
 
@@ -230,13 +264,22 @@ class AITracer:
         kind, handle = self._saliency_backend
         if kind in REMOTE_TRACERS:
             return await self._saliency_remote(pil_img, handle)
-        if kind == "rembg":
-            from rembg import remove
-            result = remove(pil_img, session=handle)
-            alpha = np.array(result)[:, :, 3]
-            _, binary = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
-            return binary
-        result = handle.process(pil_img, type="map")
+        # a cold call pays for a full model load, because the weights load
+        # lazily and an idle unload may have dropped them since the last trace.
+        # Keep the load and the inference off the event loop, or one trace
+        # stalls every other request -- including /health -- until it finishes.
+        return await asyncio.to_thread(self._saliency_local, pil_img, kind, handle)
+
+    def _saliency_local(self, pil_img, kind, slot):
+        """blocking half of _saliency_on_image, run in a worker thread."""
+        with slot.use() as model:
+            if kind == "rembg":
+                from rembg import remove
+                result = remove(pil_img, session=model)
+                alpha = np.array(result)[:, :, 3]
+                _, binary = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
+                return binary
+            result = model.process(pil_img, type="map")
         mask_np = np.array(result.convert("L"))
         _, binary = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)
         return binary

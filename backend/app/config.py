@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     tool_label_ollama_url: str = "http://localhost:11434"
     tool_label_timeout_seconds: float = 30.0
     tool_label_max_crop_px: int = 512
+    # seconds a loaded local model may sit unused before it is dropped again;
+    # 0 keeps every model resident for the lifetime of the process
+    model_idle_timeout_seconds: float = 300.0
 
     model_config = {
         "env_file": ".env",

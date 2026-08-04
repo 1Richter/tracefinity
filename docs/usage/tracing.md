@@ -6,7 +6,7 @@ After you mark the paper corners and select a paper size, the image is perspecti
 
 When only one tracer backend is configured, tracing starts automatically after corners are set. When multiple tracers are available (via the `TRACERS` env var), a dropdown appears letting you choose which tracer to use before starting.
 
-Paper detection uses a separate U2-Net Portable model that is always loaded alongside the configured tracer.
+Paper detection uses a separate U2-Net Portable model, loaded on its first use alongside the configured tracer. Both are unloaded again after five idle minutes (`MODEL_IDLE_TIMEOUT_SECONDS`), so the first upload or trace after a quiet spell takes longer while the weights load.
 
 ## Tracer backends
 
