@@ -479,7 +479,7 @@ export default function BinPage() {
                       className="w-full text-left px-3 py-1.5 text-[11px] text-text-secondary hover:bg-glass-hover hover:text-text-primary transition-colors cursor-pointer flex items-center gap-2"
                     >
                       <Package className="w-3 h-3" />
-                      3MF
+                      {zipUrl ? 'Full 3MF' : '3MF'}
                     </button>
                   )}
                   {insertStlUrl && (

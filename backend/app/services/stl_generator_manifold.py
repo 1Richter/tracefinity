@@ -1318,11 +1318,14 @@ def _export_stl(m, path: str) -> None:
 
 
 def _export_3mf(bin_m, text_m, path: str) -> None:
+    """Write a 3MF. The text body stays a separate object for multi-colour
+    printing; without labels the file holds the bin body alone."""
     import trimesh
 
     scene = trimesh.Scene()
     scene.add_geometry(_manifold_to_trimesh(bin_m), node_name='bin', geom_name='bin')
-    scene.add_geometry(_manifold_to_trimesh(text_m), node_name='text', geom_name='text')
+    if text_m is not None and not text_m.is_empty():
+        scene.add_geometry(_manifold_to_trimesh(text_m), node_name='text', geom_name='text')
     data = scene.export(file_type='3mf')
     with open(path, 'wb') as f:
         f.write(data)
@@ -1477,12 +1480,18 @@ class ManifoldSTLGenerator:
             _export_stl(bin_body, output_path)
         logger.info("export_stl: %.2fs", time.monotonic() - t1)
 
-        # 3MF export (multi-colour)
-        if text_body and threemf_path:
+        # 3MF export: always written when a path is given. 3MF carries the unit
+        # (mm), so importing it into CAD keeps the scale that an STL import can
+        # get wrong; with embossed labels it also stays multi-colour.
+        if threemf_path:
             try:
                 _export_3mf(bin_body, text_body, threemf_path)
             except Exception:
-                logger.warning("3MF export failed, skipping", exc_info=True)
+                # every bin takes this path now, so a broken trimesh soft
+                # dependency costs the 3MF everywhere rather than only on
+                # labelled bins. The route turns the missing file into a
+                # warning the user can see.
+                logger.error("3MF export failed, skipping", exc_info=True)
 
         return bin_body, text_body
 
@@ -1644,8 +1653,7 @@ class ManifoldSTLGenerator:
             return (0, 0)
         return (len(x_cuts) + 1, len(y_cuts) + 1)
 
-    @staticmethod
-    def _export_pieces(pieces: list, output_dir: str, session_id: str) -> list[str]:
+    def _export_pieces(self, pieces: list, output_dir: str, session_id: str) -> list[str]:
         """Write one STL per piece. The index is zero-padded so the cached
         response, which reads the parts back with a sorted glob, keeps the
         order they were written in once there are ten or more."""
@@ -1654,6 +1662,7 @@ class ManifoldSTLGenerator:
             path = f"{output_dir}/{session_id}_part{i + 1:02d}.stl"
             _export_stl(piece, path)
             paths.append(path)
+        self._export_pieces_3mf(pieces, output_dir, session_id)
         return paths
 
     def export_separated_parts(
@@ -1692,6 +1701,21 @@ class ManifoldSTLGenerator:
         if bed_size > 0:
             return self.split_bin(bin_body, text_body, config, bed_size, output_dir, session_id)
         return SplitParts([], 0, 0)
+
+    @staticmethod
+    def _export_pieces_3mf(pieces: list, output_dir: str, session_id: str) -> None:
+        """Write a 3MF alongside each split STL, matching filenames by index.
+
+        Best-effort per piece: a broken 3MF (same soft-dependency failure mode
+        as the unsplit export) drops that piece's download rather than the
+        whole split -- the STL, which every piece already has, still prints.
+        """
+        for i, piece in enumerate(pieces):
+            path = f"{output_dir}/{session_id}_part{i + 1:02d}.3mf"
+            try:
+                _export_3mf(piece, None, path)
+            except Exception:
+                logger.error("3MF export failed for part %d, skipping", i + 1, exc_info=True)
 
     @staticmethod
     def _split_along_axis(part, cut_points: list[float], axis: str) -> list:

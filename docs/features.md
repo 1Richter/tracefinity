@@ -78,7 +78,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 ## Export
 
 - STL download (single or multi-part)
-- 3MF export (for slicers supporting it)
+- 3MF export for every whole bin (unit-aware, keeps the mm scale that CAD tools can lose on an STL import). Split parts are STL only.
 - ZIP export (split parts as separate STLs)
 - Insert STL (separate contrast insert model)
 - SVG export (from tool editor)
