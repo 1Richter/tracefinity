@@ -298,6 +298,17 @@ export async function removeToolFromProject(projectId: string, toolId: string): 
   return fetchApi(`/api/bin-projects/${projectId}/tools/${toolId}`, { method: 'DELETE' })
 }
 
+export async function setProjectToolQuantity(
+  projectId: string,
+  toolId: string,
+  quantity: number,
+): Promise<BinProject> {
+  return fetchApi(`/api/bin-projects/${projectId}/tools/${toolId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ quantity }),
+  })
+}
+
 export async function getProjectHealth(projectId: string): Promise<ProjectHealthResponse> {
   return fetchApi(`/api/bin-projects/${projectId}/health`)
 }

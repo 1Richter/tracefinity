@@ -9,6 +9,8 @@ export const SNAP_GRID = 5 // default snap increment in mm
 export const SNAP_GRID_MIN = 0.5
 export const SNAP_GRID_MAX = 42
 export const MAX_HISTORY = 50
+// offset in mm applied to a duplicated tool so the copy is visible under the original
+export const DUPLICATE_OFFSET = 5
 export const ZOOM_FACTOR = 1.15
 export const DEFAULT_CUTOUT_DEPTH = 20
 export const DOCS_BASE_URL = 'https://github.com/tracefinity/tracefinity/blob/main/docs'

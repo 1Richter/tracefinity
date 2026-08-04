@@ -74,6 +74,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Text labels with emboss/recess options
 - Label editing (text, font size, emboss depth)
 - Per-tool cutout depth override
+- Duplicate a placed tool into an independent copy (Ctrl+C/Ctrl+V, Ctrl+D, or the toolbar button)
 - Auto-centre tools in expanded grids
 - Centre view (fit all to viewport)
 
@@ -91,6 +92,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Create named projects
 - Project status (active, ready_to_print, printed, archived)
 - Add/remove tools from projects
+- Per-tool quantity (plan for N copies of the same tool, tracked as "2/3 placed")
 - Link/detach bins
 - Create bin from project (with preset config)
 - Project health check (validate assignments)

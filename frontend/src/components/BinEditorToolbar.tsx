@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { MousePointer2, Trash2, Magnet, Type, Pencil, Maximize2 } from 'lucide-react'
+import { MousePointer2, Trash2, Magnet, Type, Pencil, Maximize2, Copy } from 'lucide-react'
 import type { FingerHole, PlacedTool, TextLabel } from '@/types'
 import { SNAP_GRID_MIN, SNAP_GRID_MAX } from '@/lib/constants'
 import { cutoutShapeLabel, usesWidthHeight } from '@/lib/cutouts'
@@ -86,6 +86,7 @@ interface Props {
   selectedHole: FingerHole | null
   selectedHoleToolId: string | null
   onEditTool?: (toolId: string) => void
+  onDuplicateTool: () => void
   onRemoveTool: () => void
   onRemoveLabel: () => void
   smoothedToolIds?: Set<string>
@@ -116,6 +117,7 @@ export function BinEditorToolbar({
   selectedHole,
   selectedHoleToolId,
   onEditTool,
+  onDuplicateTool,
   onRemoveTool,
   onRemoveLabel,
   smoothedToolIds,
@@ -226,6 +228,14 @@ export function BinEditorToolbar({
               Edit
             </button>
           )}
+          <button
+            onClick={onDuplicateTool}
+            className={`${tbBtn} ${tbInactive}`}
+            title="Duplicate tool (Ctrl+D, or Ctrl+C / Ctrl+V)"
+            aria-label="Duplicate"
+          >
+            <Copy className="w-3 h-3" />
+          </button>
           <button
             onClick={onRemoveTool}
             className={`${tbBtn} text-red-400 hover:bg-red-900/20`}
