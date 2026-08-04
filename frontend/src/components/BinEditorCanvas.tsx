@@ -154,10 +154,12 @@ export function BinEditorCanvas({
             )
           })}
 
-          {/* disabled partial-bin cells */}
-          {partialBins && Array.from({ length: gridY }).map((_, iy) =>
-              Array.from({ length: gridX }).map((_, ix) => {
-                  const enabled = partialBinsValues[iy * gridX + ix] ?? true;
+          {/* disabled partial-bin cells. fractional grids have a partial cell
+              at the right edge and in the bottom row, so the counts round up
+              and the last cell of each axis is clipped to the bin */}
+          {partialBins && Array.from({ length: Math.ceil(gridY) }).map((_, iy) =>
+              Array.from({ length: Math.ceil(gridX) }).map((_, ix) => {
+                  const enabled = partialBinsValues[iy * Math.ceil(gridX) + ix] ?? true;
                   if (enabled) return null;
                   const cell = GRID_UNIT * DISPLAY_SCALE;
                   return (
@@ -165,8 +167,8 @@ export function BinEditorCanvas({
                           key={`partial-off-${ix}-${iy}`}
                           x={ix * cell}
                           y={iy * cell}
-                          width={cell}
-                          height={cell}
+                          width={Math.min(cell, displayWidth - ix * cell)}
+                          height={Math.min(cell, displayHeight - iy * cell)}
                           fill="rgba(239, 68, 68, 0.22)"
                           stroke="rgba(239, 68, 68, 0.1)"
                           strokeWidth={1}

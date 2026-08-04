@@ -159,30 +159,61 @@ def _build_stacking_lip_notch(outer_w: float, outer_h: float):
     return mf.Manifold.batch_boolean([l0, l1, l2, l3, l4], mf.OpType.Add)
 
 
-def _base_cell_layout(grid_units: float, cell_size: float) -> list[tuple[float, float]]:
+def _base_cell_layout(
+    grid_units: float, cell_size: float, partial_first: bool = False
+) -> list[tuple[float, float]]:
     """cell centres and widths along one axis for the baseplate.
 
     for integer grid sizes every cell is cell_size wide. for fractional
-    sizes (e.g. 3.5) the last cell is a half-width partial cell.
-    returns list of (centre_offset, cell_width) tuples.
+    sizes (e.g. 3.5) one cell is a half-width partial cell. it sits at the
+    high end of the axis, or at the low end with partial_first.
+    returns list of (centre_offset, cell_width) tuples, low end first.
     """
     total = grid_units * GF_GRID
     n_cells = math.ceil(total / cell_size - 1e-9)
-    cells: list[tuple[float, float]] = []
+    widths: list[float] = []
     for i in range(n_cells):
         w = min(cell_size, total - i * cell_size)
         if w < 1.0:
             break
-        cx = i * cell_size + w / 2.0 - total / 2.0
-        cells.append((cx, w))
+        widths.append(w)
+    if partial_first:
+        widths.reverse()
+
+    cells: list[tuple[float, float]] = []
+    edge = -total / 2.0
+    for w in widths:
+        cells.append((edge + w / 2.0, w))
+        edge += w
     return cells
 
 
-def _cell_center(ix: int, iy: int, grid_x: int, grid_y: int) -> tuple[float, float]:
+def _cell_layout_xy(config: GenerateRequest) -> tuple[list, list]:
+    """Full-cell (42mm) layout of the bin along both axes.
+
+    The bin editor draws its grid from the top-left corner, so the partial
+    cell of a fractional grid ends up at the right edge and in the bottom
+    row. Manifold +y is the editor's top edge, so on the y axis the partial
+    cell has to come first for the STL to match what the user placed tools
+    against.
+    """
     return (
-        (ix - (grid_x - 1) / 2.0) * GF_GRID,
-        (iy - (grid_y - 1) / 2.0) * GF_GRID,
+        _base_cell_layout(config.grid_x, GF_GRID),
+        _base_cell_layout(config.grid_y, GF_GRID, partial_first=True),
     )
+
+
+def _cell_bounds(config: GenerateRequest, ix: int, iy: int) -> tuple[float, float, float, float]:
+    """(x0, x1, y0, y1) of one grid cell. Partial cells are narrower than 42mm."""
+    x_cells, y_cells = _cell_layout_xy(config)
+    cx, cw = x_cells[min(ix, len(x_cells) - 1)]
+    cy, ch = y_cells[min(iy, len(y_cells) - 1)]
+    return cx - cw / 2.0, cx + cw / 2.0, cy - ch / 2.0, cy + ch / 2.0
+
+
+def _cell_center(config: GenerateRequest, ix: int, iy: int) -> tuple[float, float]:
+    x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
+    return (x0 + x1) / 2.0, (y0 + y1) / 2.0
 
 
 def _partial_cell_index(config: GenerateRequest, ix: int, iy: int) -> int:
@@ -278,7 +309,7 @@ def _build_shell(config: GenerateRequest):
     cell_size = GF_HALF_GRID if half_grid else GF_GRID
 
     x_cells = _base_cell_layout(grid_x, cell_size)
-    y_cells = _base_cell_layout(grid_y, cell_size)
+    y_cells = _base_cell_layout(grid_y, cell_size, partial_first=True)
 
     base_units = []
     for cy, ch in y_cells:
@@ -311,12 +342,21 @@ def _grid_cell_counts(config: GenerateRequest) -> tuple[int, int]:
     return math.ceil(config.grid_x), math.ceil(config.grid_y)
 
 
+def _span_index(cells: list[tuple[float, float]], value: float) -> int:
+    """Index of the cell whose span contains value, clamped to the outer cells."""
+    for i, (centre, width) in enumerate(cells):
+        if value < centre + width / 2.0:
+            return i
+    return max(0, len(cells) - 1)
+
+
 def _label_layout_cell(config: GenerateRequest, x_mm: float, y_mm: float) -> tuple[int, int]:
     """Map a text label position (bin layout mm, origin top-left) to grid cell indices."""
-    grid_x, grid_y = _grid_cell_counts(config)
-    ix = min(max(int(x_mm // GF_GRID), 0), grid_x - 1)
-    # rows pitch from the bottom; fractional remainder band is the top row
-    iy = min(max(int((config.grid_y * GF_GRID - y_mm) // GF_GRID), 0), grid_y - 1)
+    x_cells, y_cells = _cell_layout_xy(config)
+    # layout mm are measured from the top-left corner, cells from the centre
+    # of the bin with +y pointing at the editor's top edge
+    ix = _span_index(x_cells, x_mm - config.grid_x * GF_GRID / 2.0)
+    iy = _span_index(y_cells, config.grid_y * GF_GRID / 2.0 - y_mm)
     return ix, iy
 
 
@@ -354,15 +394,14 @@ def _find_disabled_components(config: GenerateRequest) -> list[list[tuple[int, i
 
 
 def _component_world_bbox(config: GenerateRequest, cells: list[tuple[int, int]]):
-    half = GF_GRID / 2.0
     min_x = min_y = float("inf")
     max_x = max_y = float("-inf")
     for ix, iy in cells:
-        cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
-        min_x = min(min_x, cx - half)
-        max_x = max(max_x, cx + half)
-        min_y = min(min_y, cy - half)
-        max_y = max(max_y, cy + half)
+        x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
+        min_x = min(min_x, x0)
+        max_x = max(max_x, x1)
+        min_y = min(min_y, y0)
+        max_y = max(max_y, y1)
     return min_x, min_y, max_x, max_y
 
 
@@ -375,7 +414,6 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
     retain_wall = _partial_bins_retain_wall(config)
     bin_hw = (config.grid_x * GF_GRID - 0.5) / 2.0
     bin_hh = (config.grid_y * GF_GRID - 0.5) / 2.0
-    half = GF_GRID / 2.0
     preserve = PARTIAL_BIN_RETAIN_WALL_PRESERVE_MM
     grid_x, grid_y = _grid_cell_counts(config)
 
@@ -383,10 +421,8 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
         for ix in range(grid_x):
             if _cell_enabled(config, ix, iy):
                 continue
-            cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
+            x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
             if retain_wall:
-                x0, x1 = cx - half, cx + half
-                y0, y1 = cy - half, cy + half
                 if ix == 0:
                     x0 = max(x0, -bin_hw + preserve)
                 if ix == grid_x - 1:
@@ -404,9 +440,11 @@ def _make_connect_mode_cell_cutters(config: GenerateRequest, top_z: float):
                     mf.Manifold.extrude(cs, cut_height).translate((ccx, ccy, GF_BASE_HEIGHT - 0.1))
                 )
             else:
-                cs = _cs(_sharp_rect_pts(GF_GRID, GF_GRID))
+                cs = _cs(_sharp_rect_pts(x1 - x0, y1 - y0))
                 cutters.append(
-                    mf.Manifold.extrude(cs, cut_height).translate((cx, cy, GF_BASE_HEIGHT - 0.1))
+                    mf.Manifold.extrude(cs, cut_height).translate(
+                        ((x0 + x1) / 2.0, (y0 + y1) / 2.0, GF_BASE_HEIGHT - 0.1)
+                    )
                 )
 
     if not cutters:
@@ -419,7 +457,6 @@ def _make_connect_mode_stability_plates(config: GenerateRequest):
     import manifold3d as mf
 
     plates = []
-    overlap = GF_GRID / 2.0
     outer_w = config.grid_x * GF_GRID - 0.5
     outer_h = config.grid_y * GF_GRID - 0.5
     bin_hw = outer_w / 2.0
@@ -436,15 +473,17 @@ def _make_connect_mode_stability_plates(config: GenerateRequest):
                     continue
                 if not _cell_enabled(config, nx, ny):
                     continue
-                ncx, ncy = _cell_center(nx, ny, config.grid_x, config.grid_y)
+                # reach across the whole enabled neighbour so the plate is
+                # anchored in it
+                nx0, nx1, ny0, ny1 = _cell_bounds(config, nx, ny)
                 if dx == 1:
-                    max_x = max(max_x, ncx + overlap)
+                    max_x = max(max_x, nx1)
                 elif dx == -1:
-                    min_x = min(min_x, ncx - overlap)
+                    min_x = min(min_x, nx0)
                 if dy == 1:
-                    max_y = max(max_y, ncy + overlap)
+                    max_y = max(max_y, ny1)
                 elif dy == -1:
-                    min_y = min(min_y, ncy - overlap)
+                    min_y = min(min_y, ny0)
 
         min_x = max(min_x, -bin_hw)
         max_x = min(max_x, bin_hw)
@@ -476,10 +515,12 @@ def _make_disabled_cell_cutters(config: GenerateRequest, top_z: float):
         for ix in range(grid_x):
             if _cell_enabled(config, ix, iy):
                 continue
-            cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
-            cs = _cs(_sharp_rect_pts(GF_GRID, GF_GRID))
+            x0, x1, y0, y1 = _cell_bounds(config, ix, iy)
+            cs = _cs(_sharp_rect_pts(x1 - x0, y1 - y0))
             cutters.append(
-                mf.Manifold.extrude(cs, top_z + 0.2).translate((cx, cy, -0.1))
+                mf.Manifold.extrude(cs, top_z + 0.2).translate(
+                    ((x0 + x1) / 2.0, (y0 + y1) / 2.0, -0.1)
+                )
             )
 
     if not cutters:
@@ -643,53 +684,46 @@ def _make_magnet_holes(config: GenerateRequest):
     r = diameter / 2
     mag = mf.Manifold.cylinder(depth + 0.01, r, circular_segments=ROUND_SEGS)
 
-    x_cells = _base_cell_layout(config.grid_x, GF_GRID)
-    y_cells = _base_cell_layout(config.grid_y, GF_GRID)
+    x_cells, y_cells = _cell_layout_xy(config)
 
     if not x_cells or not y_cells:
         return mf.Manifold()
 
-    # skip partial cells (width < 42mm) -- magnets only on full cells
-    x_full = [(cx, cw) for cx, cw in x_cells if abs(cw - GF_GRID) < 0.01]
-    y_full = [(cy, ch) for cy, ch in y_cells if abs(ch - GF_GRID) < 0.01]
+    # skip partial cells (width < 42mm) -- magnets only on full cells.
+    # keep the cell index so partial bins can be checked per cell
+    x_full = [(i, cx) for i, (cx, cw) in enumerate(x_cells) if abs(cw - GF_GRID) < 0.01]
+    y_full = [(i, cy) for i, (cy, ch) in enumerate(y_cells) if abs(ch - GF_GRID) < 0.01]
 
     if not x_full or not y_full:
         return mf.Manifold()
 
+    offsets = [(-13.0, -13.0), (13.0, -13.0), (13.0, 13.0), (-13.0, 13.0)]
+
     # outer bin corners for corners_only mode
     outer_corners = set()
     if corners_only:
-        grid_ix_max = math.ceil(config.grid_x) - 1
-        grid_iy_max = math.ceil(config.grid_y) - 1
-        for ix, (cx, _) in enumerate([x_full[0], x_full[-1]]):
-            for iy, (cy, _) in enumerate([y_full[0], y_full[-1]]):
-                if not _cell_retains_base(config, ix if ix == 0 else grid_ix_max, iy if iy == 0 else grid_iy_max):
+        for ix, cx in (x_full[0], x_full[-1]):
+            for iy, cy in (y_full[0], y_full[-1]):
+                if not _cell_retains_base(config, ix, iy):
                     continue
-                for dx, dy in [(-13.0, -13.0), (13.0, -13.0), (13.0, 13.0), (-13.0, 13.0)]:
+                for dx, dy in offsets:
                     # only the corner nearest the bin edge
-                    if cx == x_full[0][0] and dx > 0 and len(x_full) > 1:
+                    if cx == x_full[0][1] and dx > 0 and len(x_full) > 1:
                         continue
-                    if cx == x_full[-1][0] and dx < 0 and len(x_full) > 1:
+                    if cx == x_full[-1][1] and dx < 0 and len(x_full) > 1:
                         continue
-                    if cy == y_full[0][0] and dy > 0 and len(y_full) > 1:
+                    if cy == y_full[0][1] and dy > 0 and len(y_full) > 1:
                         continue
-                    if cy == y_full[-1][0] and dy < 0 and len(y_full) > 1:
+                    if cy == y_full[-1][1] and dy < 0 and len(y_full) > 1:
                         continue
                     outer_corners.add((round(cx + dx, 4), round(cy + dy, 4)))
 
     holes = []
-    grid_ix = math.ceil(config.grid_x)
-    grid_iy = math.ceil(config.grid_y)
-    for iy in range(grid_iy):
-        for ix in range(grid_ix):
+    for iy, cy in y_full:
+        for ix, cx in x_full:
             if not _cell_retains_base(config, ix, iy):
                 continue
-            cx, cy = _cell_center(ix, iy, config.grid_x, config.grid_y)
-            if not any(abs(cx - fx) < 0.01 for fx, _ in x_full):
-                continue
-            if not any(abs(cy - fy) < 0.01 for fy, _ in y_full):
-                continue
-            for dx, dy in [(-13.0, -13.0), (13.0, -13.0), (13.0, 13.0), (-13.0, 13.0)]:
+            for dx, dy in offsets:
                 pos = (round(cx + dx, 4), round(cy + dy, 4))
                 if corners_only and pos not in outer_corners:
                     continue
