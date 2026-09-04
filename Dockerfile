@@ -4,17 +4,15 @@
 # Run as host user: docker run -p 3000:3000 -v ./data:/app/storage --user "$(id -u):$(id -g)" tracefinity
 # NAS (Unraid/TrueNAS): docker run -p 3000:3000 -e PUID=99 -e PGID=100 -v ./data:/app/storage tracefinity
 
-FROM node:20-slim AS frontend-build
-
-RUN corepack enable pnpm
+FROM oven/bun:1-slim AS frontend-build
 
 WORKDIR /frontend
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
 COPY frontend/ ./
 ENV NEXT_PUBLIC_API_URL=
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm run build
+RUN bun run build
 
 FROM python:3.12-slim
 

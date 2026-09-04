@@ -134,7 +134,7 @@ helm install tracefinity oci://ghcr.io/tracefinity/charts/tracefinity \
 
 ### From Source
 
-Prerequisites: Python 3.11+, Node.js 20+, [pnpm](https://pnpm.io/installation)
+Prerequisites: Python 3.11+, [Bun](https://bun.com/docs/installation)
 
 ```bash
 git clone https://github.com/tracefinity/tracefinity
@@ -142,7 +142,7 @@ cd tracefinity
 
 # First time setup
 cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-cd ../frontend && pnpm install
+cd ../frontend && bun install
 cd ..
 
 # Run (starts backend on :8000 and frontend on :4001)

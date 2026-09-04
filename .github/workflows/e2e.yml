@@ -11,12 +11,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+          bun-version: "1.4.0"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -25,13 +22,13 @@ jobs:
         run: cd backend && python -m venv venv && . venv/bin/activate && pip install -r requirements.txt
 
       - name: Install frontend
-        run: cd frontend && pnpm install --frozen-lockfile
+        run: cd frontend && bun install --frozen-lockfile
 
       - name: Install Playwright
-        run: cd frontend && pnpm exec playwright install --with-deps chromium
+        run: cd frontend && bun x playwright install --with-deps chromium
 
       - name: Run tests
-        run: cd frontend && pnpm exec playwright test
+        run: cd frontend && bun x playwright test
         env:
           E2E_TEST_MODE: '1'
           GOOGLE_API_KEY: 'mock'
