@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.config import settings
 from app.services.output_retention import retention_loop
+from app.services.sso_header_auth import SsoHeaderAuthMiddleware
 from app.services.store_errors import StoreClosedError
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -166,9 +167,12 @@ class StorageAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# middleware execution order: CORS (outermost) -> ProxySecret -> StorageAuth -> route
-# add_middleware prepends, so add in reverse order
+# middleware execution order: CORS (outermost) -> ProxySecret -> SsoHeaderAuth
+# -> StorageAuth -> route. the SSO layer must sit outside StorageAuth so an
+# identity opened from forwardAuth headers is already on the request cookie
+# when storage access is resolved. add_middleware prepends, so add in reverse
 app.add_middleware(StorageAuthMiddleware)
+app.add_middleware(SsoHeaderAuthMiddleware)
 app.add_middleware(ProxySecretMiddleware)
 app.add_middleware(
     CORSMiddleware,

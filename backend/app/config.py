@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # opt in to running open or proxy mode with native accounts on disk,
     # which reaches their data without their login. refused by default
     auth_allow_account_data_without_login: bool = False
+    # trust X-authentik-* identity headers from the loopback proxy (traefik
+    # forwardAuth) and open a native session for them, so single sign-on
+    # callers skip the native login page. traefik sets the headers only after
+    # its SSO gate authenticated the caller, and uvicorn binds loopback, so
+    # the trusted-proxy list is the second lock on top of the gate
+    sso_header_auth: bool = False
+    # Authentik group whose members become administrators on first login;
+    # existing accounts are elevated but never demoted by group edits
+    sso_admin_group: str = "authentik Admins"
+    sso_trusted_proxies: list[str] = ["127.0.0.1", "::1"]
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:4001"]
     tracers: Optional[str] = None
     replicate_api_token: Optional[str] = None
