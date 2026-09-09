@@ -22,7 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+bun-version: "1.4.0"
       - run: cd frontend && bun install --frozen-lockfile
+      - run: cd frontend && bun x next typegen
+      - run: git diff --exit-code -- frontend/next-env.d.ts
       - run: cd frontend && bun run lint
       - run: cd frontend && bun x tsc --noEmit

@@ -4,7 +4,7 @@ Hard-won lessons. Read before making changes to coordinate mapping, 3D preview, 
 
 ## Y-axis inversion
 
-SVG/layout/bin-space is Y-down (0 = top edge). build123d is Y-up. Always negate Y when mapping: `-(y + offset_y)`.
+SVG/layout/bin-space is Y-down (0 = top edge). Manifold3d is Y-up. Always negate Y when mapping: `-(y + offset_y)`.
 
 - Flipping Y reverses polygon winding -- remove any `reversed()` calls if adding a Y-flip
 - Text labels use a flipped Plane (z_dir down) so they negate Y separately
@@ -21,7 +21,7 @@ A grid like 3.5 x 2.5 has one partial (21mm) cell per fractional axis. Canonical
 
 ## Cutout pipeline order
 
-Smoothing/simplification runs BEFORE clearance (`prepare_for_generation`), never after -- vertex reduction erodes the outline by up to its tolerance and must not eat the clearance. The printed pocket is the previewed shape grown by exactly the clearance. The smoothing epsilon is absolute mm (`smooth_epsilon`), duplicated in `lib/svg.ts smoothEpsilon` -- change both together or preview and print diverge.
+Smoothing/simplification runs BEFORE clearance (`prepare_for_generation`), never after -- vertex reduction erodes the outline by up to its tolerance and must not eat the clearance. The printed pocket is the previewed shape grown by exactly the clearance. The smoothing epsilon is absolute mm (`smooth_epsilon`), duplicated in `lib/svg.ts smoothEpsilon`. After simplification, both pipelines add support points 2mm from each corner before Chaikin subdivision so corner influence cannot bow long edges. Keep the epsilon and Chaikin corner span in lockstep between backend and frontend or preview and print diverge.
 
 ## EXIF orientation
 
@@ -40,9 +40,13 @@ Single container runs both frontend and backend via supervisor. Key details:
 - `.dockerignore` excludes `docs/`, `node_modules/`, `venv/`, `storage/`, `.claude/`
 - Container runs as non-root user `tracefinity` (UID 1000) by default. Supports `--user "$(id -u):$(id -g)"` for arbitrary UIDs. Runtime-writable dirs (`/app/storage`, `/app/.u2net`, `/app/.next`, `/tmp/nginx`, `/tmp/supervisor`, `/var/lib/nginx`) are world-writable. `U2NET_HOME` and `HOME` are set to `/app` paths so model downloads and nginx/supervisor state work without root.
 
-## OCCT / build123d performance
+## Manifold3d boolean performance
 
-Boolean operations (add, subtract) are single-threaded in OCCT. More cores don't help. Polygon cutouts are batched into a single sketch + single extrude to minimise the number of booleans. Apple Silicon is ~7x faster single-thread than EPYC 7402 for these operations.
+The generator batches polygon cutters before subtracting them from the bin. Keep
+that batching: performing a separate mesh boolean for every cutout is much
+slower. Manifold3d replaced the original build123d/OCCT generator because its
+mesh booleans were measured at 10-100x faster for this workload. See
+[stl-generation.md](stl-generation.md) for the current pipeline.
 
 ## Frontend patterns
 

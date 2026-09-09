@@ -65,6 +65,22 @@ docker run --memory=10g -p 3000:3000 -v ./data:/app/storage ghcr.io/tracefinity/
 
 Headroom above the model figures accounts for OpenCV image processing, STL generation, and the Node.js frontend server.
 
+Uploaded photos and masks are rejected before decoding when they exceed 64
+megapixels. Set `MAX_IMAGE_PIXELS` to a positive integer to tune this limit for
+the host's available memory.
+
+STL generation is unlimited by default, preserving the fastest behavior for
+well-provisioned hosts. On memory-constrained or shared hosts, set
+`STL_GENERATION_CONCURRENCY` to a positive integer to cap the number of
+simultaneous generation jobs. Excess requests wait up to 5 seconds for a slot
+and then receive a 503 busy response; for example,
+`-e STL_GENERATION_CONCURRENCY=1` serializes generation and minimizes peak
+memory use. The limit is process-wide.
+
+Bin geometry is limited to a 100-cell grid footprint and 25 units per axis. The
+full manifold is generated before bed-size splitting, so printer bed size does
+not reduce peak generation memory.
+
 ### Kubernetes / Helm
 
 Set `resources.requests.memory` to match the tracer. Example for IS-Net:

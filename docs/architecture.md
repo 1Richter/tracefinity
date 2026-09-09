@@ -89,6 +89,18 @@ tracefinity/
 - **BinProject**: a planning group of tool ids and linked bin ids. Placement status is derived from linked bins (`projects.json`). Projects can carry default bin settings used when creating project bins. `tool_quantities` maps a tool id to the number of copies the project plans for; a missing entry means one, so a tool is only "placed" once every copy sits in a linked bin.
 - **Session**: ephemeral, used only for upload/trace workflow. Output is tools saved to library via `save-tools`.
 
+Each record and generated file belongs to a storage namespace, keyed by the
+account's `storage_namespace`. Identity is resolved per `AUTH_MODE` through a
+middleware chain (CORS, then ProxySecret, then StorageAuth) plus the
+`get_user_id` dependency on API routes: `native` (default) resolves the auth
+cookie to an account whose namespace keys stores and paths, with the first
+administrator claiming `default`; `proxy` trusts `X-User-Id` only with the
+matching `X-Proxy-Secret`; `open` keeps the single-user `default` fallback.
+`native` and `proxy` fail closed with `401`, and untrusted clients can never
+select a namespace by header. Accounts live in `users.json` and hashed auth
+tokens in `auth_tokens.json`, both at the storage root beside the per-user
+directories. See [auth.md](auth.md).
+
 PlacedTools sync with their library source on bin load (`GET /bins/{id}`) via `bin_service.sync_placed_tools()`. Edits to a tool's points, finger holes, or name propagate to all bins that use it. The position offset is preserved.
 
 Cutouts edited in the bin editor are per-placement: `PlacedTool.custom_hole_ids` lists library holes whose bin copy wins over the library version, `removed_hole_ids` lists library holes deleted from that placement, and holes with ids the library does not know were added in the bin. Sync keeps all three intact, so bin-local cutout work is never overwritten by a later library edit.

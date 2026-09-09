@@ -4,6 +4,39 @@
 
 STL generation uses manifold3d (mesh booleans, 10-100x faster than OCCT B-rep). The gridfinity shell is constructed from first principles using `CrossSection` extrusions and `batch_boolean` operations. Polygon cutouts, finger holes, magnet holes and text labels are subtracted from the bin body in one pass. Filleted rectangle cutouts use a full-depth rounded-bottom cutter profile with a dynamic fillet radius clamped by both one-third of the rectangle width and half the pocket depth. A cutout line (`shape="line"`) is a stadium cutter -- `width` is the length along its axis, `height` the trench width, so the footprint is a rectangle of `width - height` capped by two half-cylinders of `height / 2`; a line shorter than it is wide degenerates to a single round pocket. Like every finger hole it is cut from the floor face down by its resolved pocket depth and is not clipped to the tool outline, so one line spans a row of tools.
 
+## Generation concurrency
+
+STL generation has no concurrency limit by default. Set
+`STL_GENERATION_CONCURRENCY` to a positive integer to cap simultaneous jobs
+within the backend process and reduce peak CPU and memory use. Cached results
+do not consume a generation slot. When every slot is occupied, a request waits
+up to 5 seconds; if no slot becomes available, the API returns `503 Service
+Unavailable` with `Retry-After: 5`.
+
+The limit is per process, not shared across processes or replicas. Tracefinity
+currently runs as a single backend process, so a value of `1` serializes STL
+generation for the standard deployment.
+
+## Export retention
+
+Generated exports are regenerable from the stored polygons and bin config, so
+they are not kept indefinitely. A background sweep runs every 15 minutes and
+deletes export files older than `STL_RETENTION_HOURS` (default 24). Set it to
+`0` to keep exports forever.
+
+The sweep only removes files directly inside each user's `outputs/` directory
+with an export suffix: `.stl`, `.3mf`, `.zip`, and the `.hash` cache marker.
+Photos, traces, tools, bins, projects, and session data are never touched.
+
+Opening a bin page re-requests generation, which either refreshes the existing
+files (cache hit, which also resets their retention clock) or rebuilds them
+from saved state. The bin page's export buttons also recover on demand: a
+download that finds its file purged regenerates the bin and retries. Trace
+pages never request generation, so a purged session-flow export stays gone
+until generation is requested again. A purged export endpoint returns `404`
+with `<artefact> expired; regenerate the bin` when a prior generation is on
+record, and `<artefact> not found` otherwise.
+
 ## Z-Axis Reference Heights
 
 - **Base top**: 4.75mm (three tapered layers: 2.15 + 1.8 + 0.8). Infill starts here.
@@ -99,9 +132,19 @@ For NxM bins multiply grid centres by `(ix - (N-1)/2) * 42`.
 grid_units = ceil((tool_dimension + 2*wall + 2*clearance + 0.5) / 42)
 ```
 
+Each axis is limited to 25 grid units and the footprint to
+`ceil(grid_x) * ceil(grid_y) <= 100`. The footprint limit bounds geometry
+generation cost while still allowing long, narrow bins. Auto-size reports the
+required dimensions rather than silently shrinking layouts that exceed either
+limit.
+
 ## Bin Splitting
 
 Large bins are split along grid boundaries using manifold3d `split_by_plane`. Diagonal fit check: `(W + H) / sqrt(2) <= bed_size`. Split parts exported as ZIP.
+
+The full bin manifold is generated before splitting, so bed size controls the
+exported piece size rather than the maximum logical bin size or generation
+resource use.
 
 Each axis is cut into as many slabs as the bed needs (`_compute_split_points`, half-grid granularity), so the result is an N x M field of parts -- a 420mm bin on a 150mm bed becomes 9. `_split_along_axis` walks the cuts low to high and keeps the slab below each one, carrying the part above it into the next iteration.
 

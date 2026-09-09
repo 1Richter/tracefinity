@@ -2,8 +2,11 @@ from typing import Literal
 
 GF_GRID = 42.0
 
-# gridfinity unit sizing limits (size_mode="units")
-MAX_GRID_UNITS = 10.0
+# Bin geometry is generated in full before bed-size splitting. Keep the
+# resource ceiling tied to total grid cells while allowing long, narrow bins.
+MIN_BIN_GRID_UNITS = 1.0
+MAX_BIN_GRID_UNITS = 25.0
+MAX_BIN_GRID_CELLS = 100
 
 # custom mm sizing limits (size_mode="custom"); the minimum is one full
 # gridfinity cell, below that the base/lip profile has no room

@@ -51,7 +51,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 
 ## Bin Configuration
 
-- Grid sizing (width/depth in gridfinity units, 1-10, 0.5-unit increments for 21mm half-grid)
+- Grid sizing (width/depth in gridfinity units, 1-25 per axis and 100 cells total, with 0.5-unit increments for 21mm half-grid)
 - Custom size mode: exact outer width/depth in mm (42-1000mm) for drawer- or shelf-sized bins
 - Bin height in units (7mm each + 4.75mm base)
 - Cutout depth (5mm to max)
@@ -65,7 +65,7 @@ Reference for AI agents. Check here before suggesting new features or claiming s
 - Insert mode (contrast insert with configurable height)
 - Bed size for auto-splitting large bins
 - Partial bins (disable individual grid cells to reduce print volume)
-- Auto-size grid to fit placed tools (clamped to the 10u / 420mm maximum, with a hint when a tool needs more room)
+- Auto-size grid to fit placed tools (refuses to grow past 25 units per axis / 100 cells, with an explanation banner when a tool needs more room)
 - Save/reset default bin configuration (global and per-project)
 
 ## Bin Layout and Placement

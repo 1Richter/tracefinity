@@ -5,6 +5,13 @@ export interface Point {
 
 export type PaperSize = 'a4' | 'letter' | 'a3' | 'tabloid'
 
+export interface CaptureCrop {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface FingerHole {
   id: string
   x: number
@@ -90,6 +97,20 @@ export interface CornersResponse {
   corrected_image_url: string
   scale_factor: number
   warnings: PhotoWarning[]
+}
+
+export interface PhotoStation {
+  id: string
+  name: string
+  image_width: number
+  image_height: number
+  image_path: string | null
+  capture_crop: CaptureCrop | null
+  paper_size: PaperSize
+  corners: Point[]
+  created_at: string | null
+  updated_at: string | null
+  last_used_at: string | null
 }
 
 export interface TraceResponse {
@@ -312,4 +333,40 @@ export interface BinSummary {
   custom_width_mm: number | null
   custom_depth_mm: number | null
   preview_tools: BinPreviewTool[]
+}
+
+export interface AuthStatus {
+  mode: 'native' | 'proxy' | 'open'
+  setup_required: boolean
+  authenticated: boolean
+}
+
+export interface Account {
+  id: string
+  email: string
+  is_admin: boolean
+  disabled: boolean
+  created_at: string
+  totp_enabled: boolean
+}
+
+export interface LoginResult {
+  pending: boolean
+  pending_token: string | null
+  account: Account | null
+}
+
+export interface TwoFactorEnrolment {
+  secret: string
+  otpauth_uri: string
+}
+
+export interface BackupCodes {
+  backup_codes: string[]
+}
+
+export interface CreateUserRequest {
+  email: string
+  password: string
+  is_admin?: boolean
 }
