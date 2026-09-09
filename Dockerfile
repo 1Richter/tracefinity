@@ -111,7 +111,7 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 
 [program:backend]
-command=uvicorn app.main:app --host 127.0.0.1 --port 8000
+command=uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
 directory=/app/backend
 environment=STORAGE_PATH="/app/storage"
 autostart=true
