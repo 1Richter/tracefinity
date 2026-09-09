@@ -19,8 +19,6 @@ from app.constants import (
 # "units" sizes the bin in gridfinity units, "custom" in exact outer mm
 SizeMode = Literal["units", "custom"]
 
-# upper bound for the derived unit count in custom mode
-MAX_DERIVED_GRID_UNITS = CUSTOM_SIZE_MAX_MM / GF_GRID
 
 
 class Point(BaseModel):
@@ -187,10 +185,6 @@ class BinParams(BaseModel):
             self.grid_y = self.custom_depth_mm / GF_GRID
         else:
             for value in (self.grid_x, self.grid_y):
-                if value < MIN_BIN_GRID_UNITS or value > MAX_BIN_GRID_UNITS:
-                    raise ValueError(
-                        f"grid size must be between {MIN_BIN_GRID_UNITS:g} and {MAX_BIN_GRID_UNITS:g} units"
-                    )
                 if value * 2 != int(value * 2):
                     raise ValueError("grid size must be a multiple of 0.5")
         return self
@@ -216,15 +210,14 @@ class BinParams(BaseModel):
     @field_validator("grid_x", "grid_y")
     @classmethod
     def validate_grid(cls, v: float) -> float:
-        # the half-unit rules only apply to unit mode and are enforced
-        # in resolve_size_mode; custom mode derives grid values up to
-        # CUSTOM_SIZE_MAX_MM / 42u, which this bound still has to allow
-        # (never above MAX_BIN_GRID_UNITS, so the max is whichever is larger)
-        bound = max(MAX_BIN_GRID_UNITS, MAX_DERIVED_GRID_UNITS)
-        if v < MIN_BIN_GRID_UNITS or v > bound + 1e-9:
-            raise ValueError(
-                f"grid size must be between {MIN_BIN_GRID_UNITS:g} and {bound:.0f}"
-            )
+        # the half-unit rule only applies to unit mode and is enforced in
+        # resolve_size_mode; custom mode derives grid values up to
+        # CUSTOM_SIZE_MAX_MM / 42u, which stays below MAX_BIN_GRID_UNITS,
+        # so a single per-axis bound covers both modes
+        if v < MIN_BIN_GRID_UNITS:
+            raise ValueError(f"grid size must be at least {MIN_BIN_GRID_UNITS:g} unit")
+        if v > MAX_BIN_GRID_UNITS:
+            raise ValueError(f"grid size must not exceed {MAX_BIN_GRID_UNITS:g} units per axis")
         return v
 
     @field_validator("custom_width_mm", "custom_depth_mm")

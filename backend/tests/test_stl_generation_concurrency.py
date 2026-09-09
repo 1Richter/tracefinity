@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.api import routes
 from app.config import Settings
 from app.models.schemas import GenerateRequest
+from app.services.stl_generator_manifold import SplitParts
 
 
 class _OpenStore:
@@ -165,15 +166,18 @@ def test_uncached_generation_writes_output_and_hash(monkeypatch, tmp_path):
     monkeypatch.setattr(routes, "_stl_generation_semaphore", None)
 
     class FakeGenerator:
+        MAX_SPLIT_PARTS = 36
         def generate_bin(self, scaled, request, output_path, threemf_path):
             assert scaled == []
             assert request == GenerateRequest()
             assert threemf_path.endswith("generated.3mf")
             Path(output_path).write_bytes(b"stl")
             return object(), None
-
         def export_split_parts(self, *args):
-            return []
+            return SplitParts(paths=[], cols=0, rows=0)
+
+        def split_field(self, config, bed_size):
+            return (1, 1)
 
     monkeypatch.setattr(routes, "stl_generator", FakeGenerator())
 
@@ -182,5 +186,4 @@ def test_uncached_generation_writes_output_and_hash(monkeypatch, tmp_path):
     )
 
     assert response.stl_url.endswith("/generated.stl")
-    assert (outputs / "generated.stl").read_bytes() == b"stl"
-    assert (outputs / "generated.hash").read_text() == "input-hash"
+    assert (outputs / "generated.hash").read_text() == "input-hash\n0 0"

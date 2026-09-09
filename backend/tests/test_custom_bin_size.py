@@ -92,7 +92,7 @@ def test_unit_mode_still_rejects_off_grid_sizes():
     with pytest.raises(ValidationError):
         BinParams(grid_x=2.3)
     with pytest.raises(ValidationError):
-        BinParams(grid_x=10.5)
+        BinParams(grid_x=10.7)
 
 
 def test_partial_bins_values_sized_from_derived_grid():
