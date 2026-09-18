@@ -90,7 +90,7 @@ The sidebar controls all bin parameters:
 |-|-|
 | Grid Width / Depth | Bin size in gridfinity units (42mm each). 1-25 per axis, up to a 100-cell footprint. |
 | Custom size (mm) | Size the bin in exact outer millimetres (42-1000mm) instead of gridfinity units, so it fills a drawer or shelf. Base feet and magnets stay on the 42mm grid; auto-size is disabled. |
-| Height | Bin height in units (7mm each + 4.75mm base). |
+| Height | Bin height in units (7mm each, including the base; lip and raised rim add height). |
 | Cutout Depth | How deep tool pockets are cut. |
 | Clearance | Extra space around tool outlines. |
 | Cutout Chamfer | Bevel on the top edge of each pocket. 0 = sharp. |

@@ -12,6 +12,8 @@ from app.constants import PAPER_SIZES, PaperSize
 logger = logging.getLogger(__name__)
 
 PX_PER_MM = 10
+# a saliency mask this large is the sheet, not a tool lying on it (#213)
+TOOL_MASK_MAX_FRACTION = 0.4
 
 
 def _quad_aspect_ratio(
@@ -122,6 +124,12 @@ def _load_paper_model(name: str):
 
 
 class ImageProcessor:
+    _onnx_available: bool = False
+
+    @property
+    def _tool_mask_available(self) -> bool:
+        return self._onnx_available or getattr(self, "_tool_mask_session", None) is not None
+
     def __init__(self):
         from app.config import settings
         from app.services.model_slot import ModelSlot
@@ -151,25 +159,41 @@ class ImageProcessor:
 
         # detect_paper_corners already gates on this; the guard is here so a
         # future caller gets the reason rather than an ImportError from rembg
-        if not self._onnx_available:
+        if not self._tool_mask_available:
             raise RuntimeError("U2-Net needs ONNX Runtime, which is unavailable on this CPU")
 
         img = Image.open(image_path).convert("RGB")
-        with self._tool_mask_model.use() as session:
+        session = getattr(self, "_tool_mask_session", None)
+        if session is not None:
             result = remove(img, session=session)
+        else:
+            with self._tool_mask_model.use() as session:
+                result = remove(img, session=session)
         alpha = np.array(result)[:, :, 3]
         _, mask = cv2.threshold(alpha, 127, 255, cv2.THRESH_BINARY)
         return mask
 
     def detect_paper_corners(self, image_path: str) -> list[tuple[float, float]] | None:
-        """detect paper corners, masking out tools when U2-Net is available."""
+        """detect paper corners, masking out tools when U2-Net is available.
+        on a dark background the sheet itself is the salient object, so a
+        mask covering most of the frame is ignored and a masked miss retries
+        unmasked instead of reporting no corners (#213)."""
         img = cv2.imread(image_path)
         if img is None:
             return None
 
-        if self._onnx_available:
+        if self._tool_mask_available:
             tool_mask = self._get_tool_mask(image_path)
-            img[tool_mask > 0] = [0, 0, 0]
+            fraction = np.count_nonzero(tool_mask) / tool_mask.size
+            if fraction > TOOL_MASK_MAX_FRACTION:
+                logger.info("tool mask covers %.0f%% of the frame, likely the sheet; detecting unmasked", fraction * 100)
+            else:
+                masked = img.copy()
+                masked[tool_mask > 0] = [0, 0, 0]
+                corners = self._detect_paper(masked)
+                if corners:
+                    return corners
+                logger.info("paper not found with tools masked; retrying unmasked")
 
         return self._detect_paper(img)
 

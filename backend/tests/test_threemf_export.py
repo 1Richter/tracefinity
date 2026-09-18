@@ -66,7 +66,7 @@ def test_a_missing_3mf_is_reported_on_the_cached_path_too(tmp_path: Path, monkey
     outputs = tmp_path / "outputs"
     outputs.mkdir()
     (outputs / "bin.stl").write_bytes(b"solid\nendsolid\n")
-    (outputs / "bin.hash").write_text("same-hash")
+    (outputs / "bin.hash").write_text(f"{routes.STL_GEOMETRY_VERSION}:same-hash")
     # no bin.3mf: this is what a failed export leaves behind
 
     response = routes._run_generate(

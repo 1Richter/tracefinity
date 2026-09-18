@@ -1,6 +1,6 @@
 import math
 
-from app.models.schemas import FingerHole, Point
+from app.models.schemas import Point
 
 
 def sync_placed_tools(bin_data, user_tools) -> bool:
@@ -49,12 +49,11 @@ def sync_placed_tools(bin_data, user_tools) -> bool:
                 continue
             rx = (fh.x - lib_cx) * cos_r - (fh.y - lib_cy) * sin_r
             ry = (fh.x - lib_cx) * sin_r + (fh.y - lib_cy) * cos_r
-            new_fh.append(FingerHole(
-                id=fh.id, x=placed_cx + rx, y=placed_cy + ry,
-                radius=fh.radius, width=fh.width, height=fh.height,
-                rotation=fh.rotation, shape=fh.shape,
-                depth_override=existing.depth_override if existing else None,
-            ))
+            new_fh.append(fh.model_copy(update={
+                "x": placed_cx + rx,
+                "y": placed_cy + ry,
+                "depth_override": existing.depth_override if existing else fh.depth_override,
+            }))
         # cutouts added in the bin editor have no library counterpart
         new_fh.extend(fh for fh in pt.finger_holes if fh.id not in library_ids)
 

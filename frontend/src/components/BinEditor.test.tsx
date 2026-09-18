@@ -313,14 +313,14 @@ describe('BinEditor cutout depth cap', () => {
     return { canvas, onPlacedToolsChange }
   }
 
-  const depthInput = () => screen.getByPlaceholderText(baseProps.defaultCutoutDepth.toFixed(1))
+  const depthInput = () => screen.getByPlaceholderText(baseProps.defaultCutoutDepth.toFixed(2))
 
   it('shows the maximum depth next to a tool depth override', () => {
     const { canvas } = renderCapEditor()
 
     fireEvent.mouseDown(canvas.querySelector('path')!)
 
-    expect(screen.getByTestId('max-depth-hint').textContent).toBe(`max ${baseProps.maxCutoutDepth.toFixed(1)}`)
+    expect(screen.getByTestId('max-depth-hint').textContent).toBe(`max ${baseProps.maxCutoutDepth.toFixed(2)}`)
   })
 
   it('clamps a too-deep cutout override and flags it', () => {

@@ -19,14 +19,14 @@ interface DepthInputProps {
 const MIN_CUTOUT_DEPTH = 5
 
 function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: DepthInputProps) {
-  const [text, setText] = useState<string>(value == null ? '' : String(value))
+  const [text, setText] = useState<string>(value == null ? '' : String(Math.min(maxDepth, Math.max(5, value))))
   const [clamped, setClamped] = useState(false)
 
   // sync local text when the selected item changes (resetKey switches)
   useEffect(() => {
-    setText(value == null ? '' : String(value))
+    setText(value == null ? '' : String(Math.min(maxDepth, Math.max(5, value))))
     setClamped(false)
-  }, [resetKey, value])
+  }, [resetKey, value, maxDepth])
 
   const commit = (raw: string) => {
     const trimmed = raw.trim()
@@ -38,12 +38,10 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
     const n = parseFloat(trimmed)
     if (Number.isNaN(n)) {
       // revert local text to last committed value
-      setText(value == null ? '' : String(value))
+      setText(value == null ? '' : String(Math.min(maxDepth, Math.max(5, value))))
       return
     }
-    const next = Math.max(MIN_CUTOUT_DEPTH, Math.min(maxDepth, n))
-    // only a value cut down to the cap is what the hint is about; raising a
-    // too-shallow value to the 5mm floor is not
+    const next = Math.min(maxDepth, Math.max(Math.min(5, maxDepth), n))
     setClamped(next < n)
     setText(String(next))
     onCommit(next)
@@ -54,16 +52,16 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
       <input
         type="number"
         value={text}
-        placeholder={defaultDepth.toFixed(1)}
-        min={MIN_CUTOUT_DEPTH}
+        placeholder={Math.min(maxDepth, Math.max(5, defaultDepth)).toFixed(2)}
+        min={Math.min(5, maxDepth)}
         max={maxDepth}
-        step={0.5}
+        step={0.25}
         onChange={e => setText(e.target.value)}
         onBlur={e => commit(e.target.value)}
         onKeyDown={e => {
           if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
           if (e.key === 'Escape') {
-            setText(value == null ? '' : String(value))
+            setText(value == null ? '' : String(Math.min(maxDepth, Math.max(5, value))))
             ;(e.currentTarget as HTMLInputElement).blur()
           }
         }}
@@ -83,7 +81,7 @@ function DepthInput({ value, defaultDepth, maxDepth, onCommit, resetKey }: Depth
         className={`text-[10px] whitespace-nowrap ${clamped ? 'text-amber-400' : 'text-text-muted'}`}
         title={`Deeper cutouts would break through the bin floor at this bin height${clamped ? ' — value was clamped' : ''}`}
       >
-        max {maxDepth.toFixed(1)}
+        max {maxDepth.toFixed(2)}
       </span>
     </>
   )
@@ -255,7 +253,7 @@ export function BinEditorToolbar({
           )}
           <div
             className="flex items-center gap-1 text-[10px] text-text-muted"
-            title={`Cutout depth (mm). Default: ${defaultCutoutDepth.toFixed(1)}mm. Max: ${maxCutoutDepth.toFixed(1)}mm.`}
+            title={`Cutout depth (mm). Default: ${Math.min(maxCutoutDepth, Math.max(5, defaultCutoutDepth)).toFixed(2)}mm. Max: ${maxCutoutDepth.toFixed(2)}mm.`}
           >
             <span>Depth</span>
             <DepthInput
@@ -358,7 +356,7 @@ export function BinEditorToolbar({
           </span>
           <div
             className="flex items-center gap-1 text-[10px] text-text-muted"
-            title={`Cutout depth (mm). Default: ${defaultCutoutDepth.toFixed(1)}mm. Max: ${maxCutoutDepth.toFixed(1)}mm. Set deeper than the tool to clear protruding features.`}
+            title={`Cutout depth (mm). Default: ${Math.min(maxCutoutDepth, Math.max(5, defaultCutoutDepth)).toFixed(2)}mm. Max: ${maxCutoutDepth.toFixed(2)}mm. Set deeper than the tool to clear protruding features.`}
           >
             <span>Depth</span>
             <DepthInput
