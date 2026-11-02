@@ -85,7 +85,7 @@ cd backend
 venv/bin/python -m pytest
 
 cd ../frontend
-pnpm test
+bun run test
 ```
 
 If your local environment differs, run the equivalent complete backend and
@@ -95,7 +95,7 @@ changed, not just that some output was produced.
 
 For changes to calibration, tracing coordinates or export dimensions, also run
 `make test-e2e-accuracy`. Install Chromium first with
-`cd frontend && pnpm exec playwright install chromium`.
+`cd frontend && bun x playwright install chromium`.
 
 These tests upload a photo of a known flat 80 × 30 mm rectangle and measure the
 STL downloaded through the browser. Accurate output must stay within 1 mm of

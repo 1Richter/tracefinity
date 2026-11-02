@@ -13,7 +13,8 @@ const props = {
   activeTool: 'select' as const, setActiveTool: vi.fn(), snapEnabled: false,
   setSnapEnabled: vi.fn(), snapGrid: 1, setSnapGrid: vi.fn(), handleRecenter: vi.fn(),
   selectedTool, selectedLabel: null, selectedHole: null, selectedHoleToolId: null,
-  onRemoveTool: vi.fn(), onRemoveLabel: vi.fn(), onUpdateLabel: vi.fn(),
+  onRemoveTool: vi.fn(), onDuplicateTool: vi.fn(), onRemoveHole: vi.fn(),
+  onRemoveLabel: vi.fn(), onUpdateLabel: vi.fn(),
   defaultCutoutDepth: 20, maxCutoutDepth: 14.25,
   onSetCutoutDepthOverride: vi.fn(), onSetHoleDepthOverride: vi.fn(),
 }
