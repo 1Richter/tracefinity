@@ -176,6 +176,8 @@ describe('bin defaults', () => {
       size_mode: 'units',
       custom_width_mm: null,
       custom_depth_mm: null,
+      height_units: 4,
+      half_grid_base: false,
       preview_tools: [],
       ...overrides,
     })

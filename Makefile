@@ -1,4 +1,4 @@
-.PHONY: dev test test-backend test-frontend test-e2e test-e2e-ui lint lint-backend lint-frontend lint-fix
+.PHONY: dev test test-backend test-frontend test-e2e test-e2e-ui test-e2e-accuracy lint lint-backend lint-frontend lint-fix
 
 dev:
 	@trap 'kill 0' EXIT; \
@@ -19,6 +19,9 @@ test-e2e:
 
 test-e2e-ui:
 	cd frontend && E2E_TEST_MODE=1 GOOGLE_API_KEY=mock bun x playwright test --ui
+
+test-e2e-accuracy:
+	cd frontend && bun x playwright test --config=playwright.accuracy.config.ts
 
 lint: lint-backend lint-frontend
 

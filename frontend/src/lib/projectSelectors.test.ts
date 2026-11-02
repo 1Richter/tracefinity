@@ -46,6 +46,8 @@ const bin = (toolIds: string[]): BinSummary => ({
   size_mode: 'units',
   custom_width_mm: null,
   custom_depth_mm: null,
+  height_units: 4,
+  half_grid_base: false,
   preview_tools: [],
 })
 
@@ -60,8 +62,7 @@ const project: BinProject = {
   placed_tool_ids: ['tool-1'],
   unplaced_tool_ids: ['tool-2'],
   placed_counts: { 'tool-1': 1 },
-  target_grid_x: null,
-  target_grid_y: null,
+  sketches: [],
   default_bin_config: null,
   notes: null,
   created_at: null,

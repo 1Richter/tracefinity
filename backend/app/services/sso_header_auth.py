@@ -35,6 +35,7 @@ def _sso_account(email: str, groups_header: str) -> Account | None:
     ever elevates, so a group edit cannot strip the last administrator."""
     from app.services import namespace_tombstones
     from app.services.account_store import DuplicateAccountError, get_account_store
+    from app.services.namespace_tombstones import NamespaceNotClaimableError
 
     store = get_account_store()
     groups = [g.strip() for g in groups_header.split(",") if g.strip()]

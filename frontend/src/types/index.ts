@@ -233,6 +233,28 @@ export type ProjectHealthCode =
   | 'tool_missing_project_id'
   | 'tool_extra_project_id'
 
+/** Position of one bin on the project drawer grid, in gridfinity units from the top-left. */
+export interface ProjectBinPlacement {
+  id: string
+  bin_id: string
+  x: number
+  y: number
+  rotation: number
+  /** #rrggbb highlight colour, or null for the default bin colour. */
+  color: string | null
+}
+
+/** One drawer plan inside a project: a grid plus the bins placed on it. */
+export interface ProjectSketch {
+  id: string
+  name: string
+  target_grid_x: number | null
+  target_grid_y: number | null
+  bin_layout: ProjectBinPlacement[]
+  created_at: string | null
+  updated_at: string | null
+}
+
 export interface BinProject {
   id: string
   name: string
@@ -246,8 +268,7 @@ export interface BinProject {
   unplaced_tool_ids: string[]
   // placements found across the project's linked bins, per tool
   placed_counts: Record<string, number>
-  target_grid_x: number | null
-  target_grid_y: number | null
+  sketches: ProjectSketch[]
   default_bin_config: BinDefaults | null
   notes: string | null
   created_at: string | null
@@ -264,8 +285,7 @@ export interface BinProjectSummary {
   total_quantity: number
   placed_count: number
   unplaced_count: number
-  target_grid_x: number | null
-  target_grid_y: number | null
+  sketch_count: number
   created_at: string | null
   updated_at: string | null
 }
@@ -332,6 +352,8 @@ export interface BinSummary {
   size_mode: BinSizeMode
   custom_width_mm: number | null
   custom_depth_mm: number | null
+  height_units: number
+  half_grid_base: boolean
   preview_tools: BinPreviewTool[]
 }
 

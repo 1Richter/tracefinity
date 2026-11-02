@@ -901,6 +901,11 @@ def _clip_to_interior(
     return ext, holes
 
 
+def bin_interior_inset(wall_thickness: float, stacking_lip: bool) -> float:
+    """Wall/lip space reserved by both auto-sizing and pocket clipping."""
+    return max(wall_thickness, LIP_D0 + LIP_D2 if stacking_lip else 0.0)
+
+
 def _interior_clip_rect(config):
     """clip boundary for the bin interior in manifold coordinates (centred at origin).
 
@@ -911,8 +916,7 @@ def _interior_clip_rect(config):
     from shapely.geometry import Polygon as _SPoly
 
     outer_w, outer_h = _outer_dims(config)
-    lip_inset = (LIP_D0 + LIP_D2) if getattr(config, "stacking_lip", False) else 0.0
-    inset = max(config.wall_thickness, lip_inset)
+    inset = bin_interior_inset(config.wall_thickness, getattr(config, "stacking_lip", False))
     hw = outer_w / 2 - inset
     hh = outer_h / 2 - inset
     return _SPoly([(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)])
