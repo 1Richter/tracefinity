@@ -65,10 +65,10 @@ server {
     listen 3000;
     client_max_body_size 25m;
 
-    # api + storage -> uvicorn (120s timeout for STL generation)
+    # api + storage -> uvicorn (300s: a cold local trace = model import + inference + per-tool LLM naming with 429 retries, measured >120s)
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 300s;
         proxy_connect_timeout 10s;
         proxy_send_timeout 30s;
         proxy_set_header Host $host;

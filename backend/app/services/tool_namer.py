@@ -57,7 +57,7 @@ _BAD_NAME_FRAGMENTS = (
 
 # Per-model retry budget for OpenRouterToolNamer before falling through to
 # the next model in the priority list.
-_OPENROUTER_MAX_ATTEMPTS_PER_MODEL = 2
+_OPENROUTER_MAX_ATTEMPTS_PER_MODEL = 3
 
 
 class ToolNamer(Protocol):

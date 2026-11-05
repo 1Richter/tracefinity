@@ -271,7 +271,14 @@ class AITracer:
                 from app.services.ort_runtime import get_onnx_providers
                 providers = get_onnx_providers(require_gpu=name in GPU_REQUIRED_TRACERS)
                 logging.info("loading %s via rembg with providers: %s", label, providers)
-                session = new_session(REMBG_MODELS[name], providers=providers)
+                import onnxruntime as ort
+                # The CPU arena keeps every buffer at its high-water mark: with
+                # it on, BiRefNet Lite peaks ~7.8 GiB and is OOM-killed in an 8g
+                # container; with it off, the peak is ~6.6 GiB and freed memory
+                # goes back to the OS between requests.
+                sess_opts = ort.SessionOptions()
+                sess_opts.enable_cpu_mem_arena = False
+                session = new_session(REMBG_MODELS[name], providers=providers, sess_opts=sess_opts)
                 logging.info("%s actual ONNX providers: %s", label, session.inner_session.get_providers())
                 return session
 
